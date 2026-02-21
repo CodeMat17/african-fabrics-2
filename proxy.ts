@@ -4,10 +4,9 @@ import { NextResponse } from "next/server";
 
 const isProtectedRoute = createRouteMatcher([
   "/dashboard(.*)",
-  "/admin(.*)",
 ]);
 
-const allowedRoles = ["admin", "tailor", "beader", "consultant", "fitting_officer", "qc_officer"];
+const allowedRoles = ["admin", "consultant", "others"];
 
 export default clerkMiddleware(async (auth, req) => {
   // Protect all dashboard routes
@@ -26,15 +25,15 @@ export default clerkMiddleware(async (auth, req) => {
 
     // If user doesn't have an allowed role, redirect to home
     if (!allowedRoles.includes(userRole)) {
-      const homeUrl = new URL("/", req.url);
-      return NextResponse.redirect(homeUrl);
+      const notAllowedUrl = new URL("/not-allowed", req.url);
+      return NextResponse.redirect(notAllowedUrl);
     }
 
     // Special admin route protection
     if (req.nextUrl.pathname.startsWith("/dashboard")) {
-      if (userRole !== "admin") {
-        const dashboardUrl = new URL("/dashboard", req.url);
-        return NextResponse.redirect(dashboardUrl);
+      if (!allowedRoles.includes(userRole)) {
+        const notAllowedUrl = new URL("/not-allowed", req.url);
+        return NextResponse.redirect(notAllowedUrl);
       }
     }
 
