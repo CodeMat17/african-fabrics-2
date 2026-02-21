@@ -38,7 +38,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                         <Scissors className='h-6 w-6 text-white' />
                       </div>
                       <div>
-                        <h2 className='text-lg font-bold'>AfriStitch Pro</h2>
+                        <h2 className='text-lg font-bold'>AFD Guru</h2>
                         <p className='text-xs text-muted-foreground'>
                           Dashboard
                         </p>
@@ -57,7 +57,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
               
                 <div>
                   <h1 className='text-lg md:text-xl font-bold tracking-tight'>
-                    African Fabrics Pro
+                    AFD Guru
                   </h1>
                   <p className='hidden md:block text-xs text-muted-foreground'>
                     Premium African Tailoring

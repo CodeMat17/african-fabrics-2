@@ -21,6 +21,8 @@ import {
   Scissors,
   Ruler,
 } from "lucide-react";
+import { Label } from "@/components/ui/label";
+import Image from "next/image";
 
 type Order = Doc<"orders">;
 
@@ -123,6 +125,15 @@ export default function ViewOrderSheet({ open, onOpenChange, order }: Props) {
               )}
             </div>
           </div>
+
+          {order.fabricSample.fabricPhotoUrl &&
+            <div>
+              <Label className="text-xs text-muted-foreground">Fabric</Label>
+              <div className="relative aspect-video h-32 mt-1">
+                <Image alt='' fill className="rounded-lg object-cover" src={order.fabricSample?.fabricPhotoUrl} />
+              </div>
+            </div>
+          }
 
           {measurementEntries.length > 0 && (
             <>
