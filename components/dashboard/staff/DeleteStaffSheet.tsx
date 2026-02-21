@@ -56,7 +56,7 @@ export default function DeleteStaffSheet({ staff, open, onOpenChange }: Props) {
           <SheetDescription>This action cannot be undone</SheetDescription>
         </SheetHeader>
 
-        <div className='space-y-6 mt-6 px-4'>
+        <div className='space-y-6 mb-6 px-4'>
           {/* Warning Icon */}
           <div className='flex justify-center'>
             <div className='w-16 h-16 rounded-full bg-red-100 dark:bg-red-950 border-2 border-red-200 dark:border-red-900 flex items-center justify-center'>
