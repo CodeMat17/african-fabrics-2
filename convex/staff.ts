@@ -265,12 +265,9 @@ export const deleteStaff = mutation({
 
     // Soft delete by marking as inactive instead of hard delete
     // This preserves historical data
-    await ctx.db.patch(staffId, {
-      isActive: false,
-      updatedAt: Date.now(),
-    });
+    await ctx.db.delete(staffId);
 
-    return staffId;
+    return { success: true, staffId };
   },
 });
 
