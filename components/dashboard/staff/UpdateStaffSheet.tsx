@@ -1,16 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
-
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
-  SheetFooter,
 } from "@/components/ui/sheet";
 import {
   Select,
@@ -20,14 +19,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { Loader2 } from "lucide-react";
 
-type StaffRole = Doc<"staff">["role"];
-type Availability = Doc<"staff">["availability"];
+type StaffRole = "tailor" | "beader" | "fitter" | "qc";
 
 interface Props {
-  staff: Doc<"staff"> | null;
+  staff: Doc<"staff">;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -35,129 +35,158 @@ interface Props {
 export default function UpdateStaffSheet({ staff, open, onOpenChange }: Props) {
   const updateStaff = useMutation(api.staff.updateStaff);
 
-  // Form state starts empty and is populated on render
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [role, setRole] = useState<StaffRole | null>(null);
-  const [availability, setAvailability] = useState<Availability | null>(null);
+  const [name, setName] = useState(staff.name);
+  const [phone, setPhone] = useState(staff.phone);
+  const [role, setRole] = useState<StaffRole>(staff.role as StaffRole);
+  const [loading, setLoading] = useState(false);
 
-  if (!staff) return null;
-
-  // Always derive effective values from state or props
-  const effectiveName = name || staff.name;
-  const effectivePhone = phone || staff.phone;
-  const effectiveRole = role ?? staff.role;
-  const effectiveAvailability = availability ?? staff.availability;
-
-  const isAssignedToWorkflow =
-    !!staff.assignedStaff &&
-    Object.values(staff.assignedStaff).some((id) => id === staff._id);
+  // Reset form when staff changes or sheet opens
+  useEffect(() => {
+    if (open) {
+      setName(staff.name);
+      setPhone(staff.phone);
+      setRole(staff.role as StaffRole);
+    }
+  }, [staff, open]);
 
   const hasChanges =
-    effectiveName !== staff.name ||
-    effectivePhone !== staff.phone ||
-    effectiveRole !== staff.role ||
-    effectiveAvailability !== staff.availability;
+    name !== staff.name || phone !== staff.phone || role !== staff.role;
 
   const handleUpdate = async () => {
-    if (!hasChanges) return;
+    if (!hasChanges) {
+      onOpenChange(false);
+      return;
+    }
 
+    if (!name.trim() || !phone.trim()) {
+      toast.error("Validation Error", {
+        description: "Name and phone are required",
+      });
+      return;
+    }
+
+    setLoading(true);
     try {
-      const patch: {
+      const updates: {
         staffId: Id<"staff">;
         name?: string;
         phone?: string;
         role?: StaffRole;
-        availability?: Availability;
       } = { staffId: staff._id };
 
-      if (effectiveName !== staff.name) patch.name = effectiveName;
-      if (effectivePhone !== staff.phone) patch.phone = effectivePhone;
-      if (effectiveRole !== staff.role && !isAssignedToWorkflow)
-        patch.role = effectiveRole;
-      if (effectiveAvailability !== staff.availability)
-        patch.availability = effectiveAvailability;
+      if (name !== staff.name) updates.name = name.trim();
+      if (phone !== staff.phone) updates.phone = phone.trim();
+      if (role !== staff.role) updates.role = role;
 
-      await updateStaff(patch);
+      await updateStaff(updates);
 
-      // Reset local state after save
-      setName("");
-      setPhone("");
-      setRole(null);
-      setAvailability(null);
+      toast.success("Staff Updated", {
+        description: `${name} has been successfully updated`,
+      });
       onOpenChange(false);
-
-      toast.success("Staff data updated successfully");
     } catch (error) {
       console.error("Error updating staff:", error);
-      toast.error("Failed to update staff");
+      toast.error("Update Failed", {
+        description:
+          (error as Error).message || "Failed to update staff member",
+      });
+    } finally {
+      setLoading(false);
     }
+  };
+
+  const handleCancel = () => {
+    setName(staff.name);
+    setPhone(staff.phone);
+    setRole(staff.role as StaffRole);
+    onOpenChange(false);
   };
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side='right' className='w-full sm:max-w-md'>
+      <SheetContent className='w-full sm:max-w-md overflow-y-auto'>
         <SheetHeader>
-          <SheetTitle>Update Staff</SheetTitle>
+          <SheetTitle className='text-2xl font-bold'>Update Staff</SheetTitle>
+          <SheetDescription>Update staff member information</SheetDescription>
         </SheetHeader>
 
-        <div className='mt-6 space-y-6 px-6'>
-          <Input
-            value={effectiveName}
-            onChange={(e) => setName(e.target.value)}
-            placeholder='Staff Name'
-          />
-          <Input
-            value={effectivePhone}
-            onChange={(e) => setPhone(e.target.value)}
-            placeholder='Phone Number'
-          />
-
+        <div className='space-y-6 mt-6 px-4'>
+          {/* Name */}
           <div className='space-y-2'>
-            <p className='text-sm font-medium'>Role</p>
-            <Select
-              value={effectiveRole}
-              onValueChange={(value) => setRole(value as StaffRole)}
-              disabled={isAssignedToWorkflow}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value='tailor'>Tailor</SelectItem>
-                <SelectItem value='beader'>Beader</SelectItem>
-                <SelectItem value='fitter'>Fitter</SelectItem>
-                <SelectItem value='qc'>QC</SelectItem>
-                <SelectItem value='admin'>Admin</SelectItem>
-              </SelectContent>
-            </Select>
-            {isAssignedToWorkflow && (
-              <p className='text-xs text-muted-foreground'>
-                Role cannot be changed while assigned to an active workflow.
-              </p>
-            )}
+            <Label htmlFor='name'>
+              Name <span className='text-red-500'>*</span>
+            </Label>
+            <Input
+              id='name'
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder='Staff Name'
+              disabled={loading}
+            />
           </div>
 
+          {/* Phone */}
           <div className='space-y-2'>
-            <p className='text-sm font-medium'>Availability</p>
+            <Label htmlFor='phone'>
+              Phone Number <span className='text-red-500'>*</span>
+            </Label>
+            <Input
+              id='phone'
+              type='tel'
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder='+1234567890'
+              disabled={loading}
+            />
+          </div>
+
+          {/* Role */}
+          <div className='space-y-2'>
+            <Label htmlFor='role'>
+              Role <span className='text-red-500'>*</span>
+            </Label>
             <Select
-              value={effectiveAvailability}
-              onValueChange={(value) => setAvailability(value as Availability)}>
-              <SelectTrigger>
+              value={role}
+              onValueChange={(value) => setRole(value as StaffRole)}
+              disabled={loading}>
+              <SelectTrigger id='role'>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value='available'>Available</SelectItem>
-                <SelectItem value='busy'>Busy</SelectItem>
+                <SelectItem value='tailor'>✂️ Tailor</SelectItem>
+                <SelectItem value='beader'>💎 Beader</SelectItem>
+                <SelectItem value='fitter'>📏 Fitter</SelectItem>
+                <SelectItem value='qc'>✓ Quality Control</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          {/* Action Buttons */}
+          <div className='flex gap-3 pt-4'>
+            <Button
+              type='button'
+              variant='outline'
+              onClick={handleCancel}
+              disabled={loading}
+              className='flex-1'>
+              Cancel
+            </Button>
+            <Button
+              type='button'
+              onClick={handleUpdate}
+              disabled={loading || !hasChanges}
+              className='flex-1'>
+              {loading ? (
+                <>
+                  <Loader2 className='w-4 h-4 mr-2 animate-spin' />
+                  Updating...
+                </>
+              ) : (
+                "Save Changes"
+              )}
+            </Button>
           </div>
         </div>
-
-        <SheetFooter className='mt-8'>
-          <Button onClick={handleUpdate} disabled={!hasChanges}>
-            Save Changes
-          </Button>
-        </SheetFooter>
       </SheetContent>
     </Sheet>
   );

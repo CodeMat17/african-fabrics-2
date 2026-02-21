@@ -13,6 +13,9 @@ import {
   CheckCircle2,
   Clock,
   TrendingUp,
+  MoreVertical,
+  Edit,
+  Trash2,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -26,7 +29,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import AddStaffSheet from "@/components/dashboard/staff/AddStaffSheet";
+import UpdateStaffSheet from "@/components/dashboard/staff/UpdateStaffSheet";
+import DeleteStaffSheet from "@/components/dashboard/staff/DeleteStaffSheet";
 
 type Staff = Doc<"staff"> & {
   availability: "available" | "busy";
@@ -58,7 +70,6 @@ export default function StaffPage() {
 
     let filtered = allStaff;
 
-    // Search filter
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter((staff) =>
@@ -66,7 +77,6 @@ export default function StaffPage() {
       );
     }
 
-    // Role filter
     if (filterType !== "all") {
       filtered = filtered.filter((staff) => staff.role === filterType);
     }
@@ -74,19 +84,13 @@ export default function StaffPage() {
     return filtered;
   }, [allStaff, searchQuery, filterType]);
 
-  // Statistics
   const stats = useMemo(() => {
     if (!allStaff) {
       return {
         total: 0,
         available: 0,
         busy: 0,
-        byRole: {
-          tailor: 0,
-          beader: 0,
-          fitter: 0,
-          qc: 0,
-        },
+        byRole: { tailor: 0, beader: 0, fitter: 0, qc: 0 },
       };
     }
 
@@ -102,18 +106,12 @@ export default function StaffPage() {
       qc: allStaff.filter((s) => s.role === "qc").length,
     };
 
-    return {
-      total: allStaff.length,
-      available,
-      busy,
-      byRole,
-    };
+    return { total: allStaff.length, available, busy, byRole };
   }, [allStaff]);
 
   return (
     <div className='min-h-screen lg:ml-16'>
       <div className='max-w-7xl mx-auto'>
-        {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -133,7 +131,6 @@ export default function StaffPage() {
             </Button>
           </div>
 
-          {/* Statistics Cards */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -157,17 +154,14 @@ export default function StaffPage() {
               color='red'
               icon={<Clock className='w-5 h-5' />}
             />
-           
           </motion.div>
         </motion.div>
 
-        {/* Controls */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
           className='grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 mb-6 md:mb-8'>
-          {/* Search */}
           <div className='relative'>
             <Search className='absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground' />
             <Input
@@ -178,7 +172,6 @@ export default function StaffPage() {
             />
           </div>
 
-          {/* Filter */}
           <Select
             value={filterType}
             onValueChange={(value: FilterType) => setFilterType(value)}>
@@ -198,7 +191,6 @@ export default function StaffPage() {
           </Select>
         </motion.div>
 
-        {/* Staff Grid */}
         <motion.div
           layout
           className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4'>
@@ -209,7 +201,6 @@ export default function StaffPage() {
           </AnimatePresence>
         </motion.div>
 
-        {/* Empty State */}
         {filteredStaff.length === 0 && (
           <motion.div
             initial={{ opacity: 0, scale: 0.9 }}
@@ -221,7 +212,6 @@ export default function StaffPage() {
         )}
       </div>
 
-      {/* Add Staff Sheet */}
       <AddStaffSheet open={isAddStaffOpen} onOpenChange={setIsAddStaffOpen} />
     </div>
   );
@@ -285,117 +275,158 @@ function StatsCard({
 }
 
 function StaffCard({ staff, index }: { staff: Staff; index: number }) {
+  const [updateOpen, setUpdateOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+
   const workload = useQuery(api.staff.getStaffWorkload, { staffId: staff._id });
   const isBusy = staff.availability === "busy";
   const roleConfig = ROLE_CONFIG[staff.role as keyof typeof ROLE_CONFIG];
 
   return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, scale: 0.9, y: 20 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.9, y: -20 }}
-      transition={{
-        delay: index * 0.05,
-        type: "spring",
-        stiffness: 260,
-        damping: 20,
-      }}
-      whileHover={{ scale: 1.02, y: -4 }}
-      className='group'>
-      <Card
-        className={`transition-all overflow-hidden ${
-          isBusy
-            ? "border-red-200 dark:border-red-900 hover:border-red-300 dark:hover:border-red-800"
-            : "border-green-200 dark:border-green-900 hover:border-green-300 dark:hover:border-green-800"
-        }`}>
-        <CardHeader className='pb-3'>
-          <div className='flex items-start gap-3'>
-            <Avatar className='w-12 h-12 sm:w-14 sm:h-14'>
-              <AvatarFallback className='bg-gradient-to-br from-cyan-500 to-purple-500 text-white text-lg font-bold'>
-                {staff.name.charAt(0)}
-              </AvatarFallback>
-            </Avatar>
+    <>
+      <motion.div
+        layout
+        initial={{ opacity: 0, scale: 0.9, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.9, y: -20 }}
+        transition={{
+          delay: index * 0.05,
+          type: "spring",
+          stiffness: 260,
+          damping: 20,
+        }}
+        whileHover={{ scale: 1.02, y: -4 }}
+        className='group'>
+        <Card
+          className={`transition-all overflow-hidden ${
+            isBusy
+              ? "border-red-200 dark:border-red-900 hover:border-red-300 dark:hover:border-red-800"
+              : "border-green-200 dark:border-green-900 hover:border-green-300 dark:hover:border-green-800"
+          }`}>
+          <CardHeader className='pb-3'>
+            <div className='flex items-start justify-between gap-2 mb-3'>
+              <div className='flex items-start gap-3 flex-1 min-w-0'>
+                <Avatar className='w-12 h-12 sm:w-14 sm:h-14'>
+                  <AvatarFallback className='bg-gradient-to-br from-cyan-500 to-purple-500 text-white text-lg font-bold'>
+                    {staff.name.charAt(0)}
+                  </AvatarFallback>
+                </Avatar>
 
-            <div className='flex-1 min-w-0'>
-              <div className='flex items-start justify-between gap-2 mb-2'>
-                <h3 className='text-base sm:text-lg font-semibold truncate'>
-                  {staff.name}
-                </h3>
-                <div
-                  className={`w-2 h-2 rounded-full ${
-                    isBusy
-                      ? "bg-red-500 dark:bg-red-400"
-                      : "bg-green-500 dark:bg-green-400"
-                  } animate-pulse shrink-0 mt-1`}
-                />
+                <div className='flex-1 min-w-0'>
+                  <div className='flex items-start justify-between gap-2 mb-2'>
+                    <h3 className='text-base sm:text-lg font-semibold truncate'>
+                      {staff.name}
+                    </h3>
+                    <div
+                      className={`w-2 h-2 rounded-full ${
+                        isBusy
+                          ? "bg-red-500 dark:bg-red-400"
+                          : "bg-green-500 dark:bg-green-400"
+                      } animate-pulse shrink-0 mt-1`}
+                    />
+                  </div>
+
+                  <div className='flex flex-wrap gap-2 mb-2'>
+                    <Badge className='text-xs'>
+                      <span className='mr-1'>{roleConfig?.icon}</span>
+                      {roleConfig?.label}
+                    </Badge>
+                    <Badge
+                      className={`text-xs ${
+                        isBusy
+                          ? "bg-red-100 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-300 dark:border-red-900"
+                          : "bg-green-100 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-300 dark:border-green-900"
+                      }`}>
+                      {isBusy ? "BUSY" : "AVAILABLE"}
+                    </Badge>
+                  </div>
+
+                  <p className='text-xs text-muted-foreground truncate'>
+                    {staff.phone}
+                  </p>
+                </div>
               </div>
 
-              <div className='flex flex-wrap gap-2 mb-2'>
-                <Badge className='text-xs'>
-                  <span className='mr-1'>{roleConfig?.icon}</span>
-                  {roleConfig?.label}
-                </Badge>
-                <Badge
-                  className={`text-xs ${
-                    isBusy
-                      ? "bg-red-100 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-300 dark:border-red-900"
-                      : "bg-green-100 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-300 dark:border-green-900"
-                  }`}>
-                  {isBusy ? "BUSY" : "AVAILABLE"}
-                </Badge>
-              </div>
-
-              <p className='text-xs text-muted-foreground truncate'>
-                {staff.phone}
-              </p>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant='ghost'
+                    size='icon'
+                    className='h-8 w-8 shrink-0'>
+                    <MoreVertical className='h-4 w-4' />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align='end'>
+                  <DropdownMenuItem onClick={() => setUpdateOpen(true)}>
+                    <Edit className='mr-2 h-4 w-4' />
+                    Update
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={() => setDeleteOpen(true)}
+                    className='text-red-600 focus:text-red-600'>
+                    <Trash2 className='mr-2 h-4 w-4' />
+                    Delete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
-          </div>
-        </CardHeader>
+          </CardHeader>
 
-        <CardContent className='space-y-3'>
-          {/* Current Assignment */}
-          {staff.currentAssignment && (
-            <div className='bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-900 rounded-lg p-3'>
-              <p className='text-xs text-red-700 dark:text-red-300 font-medium mb-1'>
-                Currently Working On:
-              </p>
-              <p className='text-xs text-muted-foreground font-mono'>
-                {staff.currentAssignment.orderNumber}
-              </p>
-              <p className='text-xs text-muted-foreground mt-1 capitalize'>
-                Stage: {staff.currentAssignment.stage}
-              </p>
-            </div>
-          )}
-
-          {/* Workload Statistics */}
-          {workload && (
-            <div className='grid grid-cols-2 gap-3 pt-3 border-t'>
-              <div>
-                <p className='text-xs text-muted-foreground mb-1'>Completed</p>
-                <p className='text-lg font-bold text-cyan-600 dark:text-cyan-400'>
-                  {workload.statistics.totalCompleted}
+          <CardContent className='space-y-3'>
+            {staff.currentAssignment && (
+              <div className='bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-900 rounded-lg p-3'>
+                <p className='text-xs text-red-700 dark:text-red-300 font-medium mb-1'>
+                  Currently Working On:
+                </p>
+                <p className='text-xs text-muted-foreground font-mono'>
+                  {staff.currentAssignment.orderNumber}
+                </p>
+                <p className='text-xs text-muted-foreground mt-1 capitalize'>
+                  Stage: {staff.currentAssignment.stage}
                 </p>
               </div>
-              <div>
-                <p className='text-xs text-muted-foreground mb-1'>Avg Time</p>
-                <p className='text-lg font-bold text-purple-600 dark:text-purple-400'>
-                  {workload.statistics.avgCompletionTimeHours.toFixed(1)}h
-                </p>
-              </div>
-            </div>
-          )}
+            )}
 
-          {/* Status Indicator */}
-          {!isBusy && (
-            <div className='flex items-center gap-2 text-xs text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-900 rounded-lg p-2'>
-              <CheckCircle2 className='w-3 h-3' />
-              <span>Ready for assignment</span>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </motion.div>
+            {workload && (
+              <div className='grid grid-cols-2 gap-3 pt-3 border-t'>
+                <div>
+                  <p className='text-xs text-muted-foreground mb-1'>
+                    Completed
+                  </p>
+                  <p className='text-lg font-bold text-cyan-600 dark:text-cyan-400'>
+                    {workload.statistics.totalCompleted}
+                  </p>
+                </div>
+                <div>
+                  <p className='text-xs text-muted-foreground mb-1'>Avg Time</p>
+                  <p className='text-lg font-bold text-purple-600 dark:text-purple-400'>
+                    {workload.statistics.avgCompletionTimeHours.toFixed(1)}h
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {!isBusy && (
+              <div className='flex items-center gap-2 text-xs text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-900 rounded-lg p-2'>
+                <CheckCircle2 className='w-3 h-3' />
+                <span>Ready for assignment</span>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </motion.div>
+
+      <UpdateStaffSheet
+        staff={staff}
+        open={updateOpen}
+        onOpenChange={setUpdateOpen}
+      />
+      <DeleteStaffSheet
+        staff={staff}
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+      />
+    </>
   );
 }
