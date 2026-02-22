@@ -1,4 +1,3 @@
-// app/admin/upload/page.tsx
 "use client";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -9,7 +8,6 @@ import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/convex/_generated/api";
-import { parseCSVDateToTimestamp } from "@/utils/date-utils";
 import { useMutation } from "convex/react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -20,19 +18,146 @@ import {
   Upload,
 } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
-
-import type {
-  CreateOrderMutationArgs,
-  FemaleMeasurements,
-  MaleMeasurements,
-  ParsedCSVRow,
-  UploadProgress,
-} from "@/types/order-types";
 import Papa from "papaparse";
+
+// Type for the CSV structure from the uploaded file
+interface CSVRow {
+  name: string;
+  phone: string;
+  email: string;
+  garmentType: string;
+  gender: string;
+  expectedCollectionDate: string;
+  fabricPhotoUrl?: string;
+  fabricType: string;
+  specialInstructions?: string;
+
+  // Male measurements (prefixed with maleMeasurements_)
+  maleMeasurements_forehead?: string;
+  maleMeasurements_forearm?: string;
+  maleMeasurements_wrist?: string;
+  maleMeasurements_torsoCircum?: string;
+  maleMeasurements_pantsLength?: string;
+  maleMeasurements_chest?: string;
+  maleMeasurements_chestAtAmpits?: string;
+  maleMeasurements_thighAtCrotch?: string;
+  maleMeasurements_midThigh?: string;
+  maleMeasurements_knee?: string;
+  maleMeasurements_belowKnee?: string;
+  maleMeasurements_calf?: string;
+  maleMeasurements_ankle?: string;
+  maleMeasurements_bicep?: string;
+  maleMeasurements_elbow?: string;
+  maleMeasurements_waist?: string;
+  maleMeasurements_hips?: string;
+  maleMeasurements_shoulders?: string;
+  maleMeasurements_sleeveLength?: string;
+  maleMeasurements_topLength?: string;
+  maleMeasurements_trouserLength?: string;
+  maleMeasurements_thigh?: string;
+  maleMeasurements_neck?: string;
+
+  // Female measurements (prefixed with femaleMeasurements_)
+  femaleMeasurements_neck?: string;
+  femaleMeasurements_bust?: string;
+  femaleMeasurements_overBust?: string;
+  femaleMeasurements_underBust?: string;
+  femaleMeasurements_neckToHeel?: string;
+  femaleMeasurements_neckToAboveKnee?: string;
+  femaleMeasurements_armLength?: string;
+  femaleMeasurements_shoulderSeam?: string;
+  femaleMeasurements_armHole?: string;
+  femaleMeasurements_foreArm?: string;
+  femaleMeasurements_vNeckCut?: string;
+  femaleMeasurements_aboveKneeToAnkle?: string;
+  femaleMeasurements_waistToAboveKnee?: string;
+  femaleMeasurements_waist?: string;
+  femaleMeasurements_hips?: string;
+  femaleMeasurements_shoulders?: string;
+  femaleMeasurements_sleeveLength?: string;
+  femaleMeasurements_armhole?: string;
+  femaleMeasurements_skirtLength?: string;
+  femaleMeasurements_blouseLength?: string;
+}
+
+// Type-safe measurement objects
+interface MaleMeasurements {
+  forehead?: string;
+  forearm?: string;
+  wrist?: string;
+  torsoCircum?: string;
+  pantsLength?: string;
+  chest?: string;
+  chestAtAmpits?: string;
+  thighAtCrotch?: string;
+  midThigh?: string;
+  knee?: string;
+  belowKnee?: string;
+  calf?: string;
+  ankle?: string;
+  bicep?: string;
+  elbow?: string;
+  waist?: string;
+  hips?: string;
+  shoulders?: string;
+  sleeveLength?: string;
+  topLength?: string;
+  trouserLength?: string;
+  thigh?: string;
+  neck?: string;
+}
+
+interface FemaleMeasurements {
+  neck?: string;
+  bust?: string;
+  overBust?: string;
+  underBust?: string;
+  neckToHeel?: string;
+  neckToAboveKnee?: string;
+  armLength?: string;
+  shoulderSeam?: string;
+  armHole?: string;
+  foreArm?: string;
+  vNeckCut?: string;
+  aboveKneeToAnkle?: string;
+  waistToAboveKnee?: string;
+  waist?: string;
+  hips?: string;
+  shoulders?: string;
+  sleeveLength?: string;
+  armhole?: string;
+  skirtLength?: string;
+  blouseLength?: string;
+}
+
+// Type-safe order data structure
+interface OrderData {
+  name: string;
+  phone: string;
+  email: string;
+  garmentType: string;
+  gender: "male" | "female";
+  expectedCollectionDate: number;
+  fabricSample: {
+    fabricType: string;
+    fabricPhotoUrl?: string;
+  };
+  specialInstructions?: string;
+  maleMeasurements?: MaleMeasurements;
+  femaleMeasurements?: FemaleMeasurements;
+}
+
+interface UploadProgress {
+  total: number;
+  processed: number;
+  succeeded: number;
+  failed: number;
+  errors: { row: number; error: string }[];
+}
 
 export default function UploadPage() {
   const [file, setFile] = useState<File | null>(null);
-  const [parsedData, setParsedData] = useState<ParsedCSVRow[]>([]);
+  const [parsedData, setParsedData] = useState<CSVRow[]>([]);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress>({
     total: 0,
     processed: 0,
@@ -47,14 +172,17 @@ export default function UploadPage() {
   const createOrder = useMutation(api.orders.createOrder);
 
   const parseCSV = useCallback((file: File) => {
-    Papa.parse<ParsedCSVRow>(file, {
+    Papa.parse<CSVRow>(file, {
       header: true,
       skipEmptyLines: true,
+      transformHeader: (header) => header.trim(),
       complete: (results) => {
-        setParsedData(results.data);
+        // Filter out rows with empty names
+        const validData = results.data.filter((row) => row.name?.trim());
+        setParsedData(validData);
         setUploadProgress((prev) => ({
           ...prev,
-          total: results.data.length,
+          total: validData.length,
         }));
       },
       error: (error: Error) => {
@@ -74,103 +202,145 @@ export default function UploadPage() {
     [parseCSV],
   );
 
-  const transformRowToOrder = useCallback(
-    (row: ParsedCSVRow): CreateOrderMutationArgs => {
-      const gender = row.sex?.toLowerCase() === "men" ? "male" : "female";
+  // Helper to parse Excel date format (e.g., "1.73975E+12" → timestamp)
+  const parseExcelDate = (dateStr: string | undefined): number => {
+    if (!dateStr) {
+      // Default to 7 days from now
+      return Date.now() + 7 * 24 * 60 * 60 * 1000;
+    }
 
-      // Fix: Use the proper date parsing function
-      const expectedCollectionDate = parseCSVDateToTimestamp(row.due_date);
+    // Handle scientific notation (Excel exports)
+    if (dateStr.includes("E")) {
+      const timestamp = parseFloat(dateStr);
+      // If it's in milliseconds range, use it directly
+      if (timestamp > 1000000000000) {
+        return timestamp;
+      }
+      // If it's in seconds, convert to milliseconds
+      return timestamp * 1000;
+    }
 
-      // Log for debugging (remove in production)
-      console.log({
-        originalDate: row.due_date,
-        parsedTimestamp: expectedCollectionDate,
-        formattedDate: new Date(expectedCollectionDate).toISOString(),
-      });
+    // Handle ISO date strings
+    const date = new Date(dateStr);
+    if (!isNaN(date.getTime())) {
+      return date.getTime();
+    }
 
-      const baseOrder: CreateOrderMutationArgs = {
-        name: row.name?.trim() || "Unknown",
-        phone: row.tel?.trim() || "",
-        email: row.email?.trim() || "",
-        garmentType: row.style?.trim() || "",
-        gender,
-        expectedCollectionDate,
-        fabricSample: {
-          fabricPhotoUrl: row.fabric?.trim() || undefined,
-          fabricType: row.style?.trim() || "",
-        },
-      };
+    // Fallback: 7 days from now
+    return Date.now() + 7 * 24 * 60 * 60 * 1000;
+  };
 
-      if (gender === "male") {
-        const maleMeasurements: MaleMeasurements = {
-          forehead: row.forehead || undefined,
-          forearm: row.forearm || undefined,
-          wrist: row.wrist || undefined,
-          torsoCircum: row.torso_circum || undefined,
-          pantsLength: row.pants_length || undefined,
-          chest: row.chest_or_bust || undefined,
-          chestAtAmpits: row.chest_at_ampits || undefined,
-          thighAtCrotch: row.thigh_at_crotch || undefined,
-          midThigh: row.mid_thigh || undefined,
-          knee: row.knee || undefined,
-          belowKnee: row.below_knee || undefined,
-          calf: row.calf || undefined,
-          ankle: row.ankle || undefined,
-          bicep: row.bicep || undefined,
-          elbow: row.elbow || undefined,
-          waist: row.waist || undefined,
-          hips: row.hips || undefined,
-          shoulders: row.shoulders || undefined,
-          sleeveLength: row.s_seam || undefined,
-          neck: row.neck || undefined,
-        };
+  // Helper to clean and validate measurement values
+  const cleanMeasurement = (value: string | undefined): string | undefined => {
+    if (!value || value.trim() === "" || value === "0") {
+      return undefined;
+    }
+    return value.trim();
+  };
 
-        // Filter out undefined values
-        const filteredMeasurements = Object.fromEntries(
-          Object.entries(maleMeasurements).filter(
-            ([_, value]) => value !== undefined,
-          ),
-        ) as MaleMeasurements;
+  const transformRowToOrder = useCallback((row: CSVRow): OrderData => {
+    const gender: "male" | "female" =
+      row.gender?.toLowerCase() === "male" ? "male" : "female";
 
-        baseOrder.maleMeasurements = filteredMeasurements;
-      } else {
-        const femaleMeasurements: FemaleMeasurements = {
-          neck: row.neck || undefined,
-          bust: row.bust || undefined,
-          overBust: row.o_bust || undefined,
-          underBust: row.u_bust || undefined,
-          neckToHeel: row.nk_heel || undefined,
-          neckToAboveKnee: row.nk_abov_knee || undefined,
-          armLength: row.a_length || undefined,
-          shoulderSeam: row.s_seam || undefined,
-          armHole: row.arm_hole || undefined,
-          foreArm: row.fore_arm || undefined,
-          vNeckCut: row.v_neck_cut || undefined,
-          aboveKneeToAnkle: row.abv_knee_ankle || undefined,
-          waistToAboveKnee: row.w_abv_knee || undefined,
-          waist: row.waist || undefined,
-          hips: row.hips || undefined,
-          shoulders: row.shoulders || undefined,
-          sleeveLength: row.s_seam || undefined,
-          armhole: row.arm_hole || undefined,
-          skirtLength: row.top_length || undefined,
-          blouseLength: row.top_length || undefined,
-        };
+    const orderData: OrderData = {
+      name: row.name?.trim() || "Unknown",
+      phone: row.phone?.trim() || "",
+      email: row.email?.trim() || "",
+      garmentType: row.garmentType?.trim() || "",
+      gender,
+      expectedCollectionDate: parseExcelDate(row.expectedCollectionDate),
+      fabricSample: {
+        fabricType: row.fabricType?.trim() || row.garmentType?.trim() || "",
+        fabricPhotoUrl: row.fabricPhotoUrl?.trim() || undefined,
+      },
+      specialInstructions: row.specialInstructions?.trim() || undefined,
+    };
 
-        // Filter out undefined values
-        const filteredMeasurements = Object.fromEntries(
-          Object.entries(femaleMeasurements).filter(
-            ([_, value]) => value !== undefined,
-          ),
-        ) as FemaleMeasurements;
+    // Extract male measurements
+    if (gender === "male") {
+      const maleMeasurements: MaleMeasurements = {};
 
-        baseOrder.femaleMeasurements = filteredMeasurements;
+      const maleFields: (keyof MaleMeasurements)[] = [
+        "forehead",
+        "forearm",
+        "wrist",
+        "torsoCircum",
+        "pantsLength",
+        "chest",
+        "chestAtAmpits",
+        "thighAtCrotch",
+        "midThigh",
+        "knee",
+        "belowKnee",
+        "calf",
+        "ankle",
+        "bicep",
+        "elbow",
+        "waist",
+        "hips",
+        "shoulders",
+        "sleeveLength",
+        "topLength",
+        "trouserLength",
+        "thigh",
+        "neck",
+      ];
+
+      for (const field of maleFields) {
+        const csvKey = `maleMeasurements_${field}` as keyof CSVRow;
+        const value = cleanMeasurement(row[csvKey] as string | undefined);
+        if (value) {
+          maleMeasurements[field] = value;
+        }
       }
 
-      return baseOrder;
-    },
-    [],
-  );
+      if (Object.keys(maleMeasurements).length > 0) {
+        orderData.maleMeasurements = maleMeasurements;
+      }
+    }
+
+    // Extract female measurements
+    if (gender === "female") {
+      const femaleMeasurements: FemaleMeasurements = {};
+
+      const femaleFields: (keyof FemaleMeasurements)[] = [
+        "neck",
+        "bust",
+        "overBust",
+        "underBust",
+        "neckToHeel",
+        "neckToAboveKnee",
+        "armLength",
+        "shoulderSeam",
+        "armHole",
+        "foreArm",
+        "vNeckCut",
+        "aboveKneeToAnkle",
+        "waistToAboveKnee",
+        "waist",
+        "hips",
+        "shoulders",
+        "sleeveLength",
+        "armhole",
+        "skirtLength",
+        "blouseLength",
+      ];
+
+      for (const field of femaleFields) {
+        const csvKey = `femaleMeasurements_${field}` as keyof CSVRow;
+        const value = cleanMeasurement(row[csvKey] as string | undefined);
+        if (value) {
+          femaleMeasurements[field] = value;
+        }
+      }
+
+      if (Object.keys(femaleMeasurements).length > 0) {
+        orderData.femaleMeasurements = femaleMeasurements;
+      }
+    }
+
+    return orderData;
+  }, []);
 
   const uploadOrders = useCallback(async () => {
     if (!parsedData.length) return;
@@ -238,32 +408,65 @@ export default function UploadPage() {
   }, []);
 
   const downloadSampleCSV = useCallback(() => {
-    const sampleData: Partial<ParsedCSVRow>[] = [
+    // Create sample CSV matching the schema
+    const headers = [
+      "name",
+      "phone",
+      "email",
+      "garmentType",
+      "gender",
+      "expectedCollectionDate",
+      "fabricPhotoUrl",
+      "fabricType",
+      "specialInstructions",
+      // Male measurements
+      "maleMeasurements_chest",
+      "maleMeasurements_waist",
+      "maleMeasurements_hips",
+      "maleMeasurements_shoulders",
+      "maleMeasurements_sleeveLength",
+      "maleMeasurements_neck",
+      // Female measurements
+      "femaleMeasurements_bust",
+      "femaleMeasurements_waist",
+      "femaleMeasurements_hips",
+      "femaleMeasurements_shoulders",
+      "femaleMeasurements_sleeveLength",
+      "femaleMeasurements_neck",
+    ];
+
+    const sampleData = [
       {
         name: "John Doe",
-        tel: "+1234567890",
+        phone: "+1234567890",
         email: "john@example.com",
-        style: "Senator suit",
-        sex: "Men",
-        due_date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
-          .toISOString()
-          .split("T")[0],
-        fabric: "https://example.com/fabric.jpg",
+        garmentType: "Senator suit",
+        gender: "male",
+        expectedCollectionDate: new Date(
+          Date.now() + 7 * 24 * 60 * 60 * 1000,
+        ).getTime(),
+        fabricType: "Ankara",
+        maleMeasurements_chest: "42",
+        maleMeasurements_waist: "36",
+        maleMeasurements_hips: "40",
       },
       {
         name: "Jane Smith",
-        tel: "+1234567891",
+        phone: "+1234567891",
         email: "jane@example.com",
-        style: "Lace dress",
-        sex: "Women",
-        due_date: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
-          .toISOString()
-          .split("T")[0],
-        fabric: "https://example.com/fabric2.jpg",
+        garmentType: "Lace dress",
+        gender: "female",
+        expectedCollectionDate: new Date(
+          Date.now() + 14 * 24 * 60 * 60 * 1000,
+        ).getTime(),
+        fabricType: "Lace",
+        femaleMeasurements_bust: "38",
+        femaleMeasurements_waist: "32",
+        femaleMeasurements_hips: "42",
       },
     ];
 
-    const csv = Papa.unparse(sampleData);
+    const csv = Papa.unparse(sampleData, { columns: headers });
     const blob = new Blob([csv], { type: "text/csv" });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -373,25 +576,31 @@ export default function UploadPage() {
                             <th className='p-2 text-left'>Email</th>
                             <th className='p-2 text-left'>Garment</th>
                             <th className='p-2 text-left'>Gender</th>
-                            <th className='p-2 text-left'>Due Date</th>
+                            <th className='p-2 text-left'>Collection Date</th>
                           </tr>
                         </thead>
                         <tbody>
                           {parsedData.slice(0, 10).map((row, index) => (
                             <tr key={index} className='border-t'>
                               <td className='p-2'>{row.name}</td>
-                              <td className='p-2'>{row.tel}</td>
+                              <td className='p-2'>{row.phone}</td>
                               <td className='p-2'>{row.email}</td>
-                              <td className='p-2'>{row.style}</td>
+                              <td className='p-2'>{row.garmentType}</td>
                               <td className='p-2'>
                                 <Badge
                                   variant={
-                                    row.sex === "Men" ? "default" : "secondary"
+                                    row.gender === "male"
+                                      ? "default"
+                                      : "secondary"
                                   }>
-                                  {row.sex}
+                                  {row.gender}
                                 </Badge>
                               </td>
-                              <td className='p-2'>{row.due_date}</td>
+                              <td className='p-2'>
+                                {new Date(
+                                  parseExcelDate(row.expectedCollectionDate),
+                                ).toLocaleDateString()}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -411,7 +620,11 @@ export default function UploadPage() {
                     exit={{ opacity: 0 }}>
                     <ScrollArea className='h-96 rounded-md border'>
                       <pre className='p-4 text-sm'>
-                        {JSON.stringify(parsedData.slice(0, 3), null, 2)}
+                        {JSON.stringify(
+                          parsedData.slice(0, 3).map(transformRowToOrder),
+                          null,
+                          2,
+                        )}
                         {parsedData.length > 3 && "\n\n... and more records"}
                       </pre>
                     </ScrollArea>
@@ -511,9 +724,9 @@ export default function UploadPage() {
                     )}
 
                     {isUploadComplete && (
-                      <Alert className='bg-green-50 border-green-200'>
-                        <CheckCircle2 className='h-4 w-4 text-green-600' />
-                        <AlertDescription className='text-green-600'>
+                      <Alert className='bg-green-50 border-green-200 dark:bg-green-950 dark:border-green-900'>
+                        <CheckCircle2 className='h-4 w-4 text-green-600 dark:text-green-400' />
+                        <AlertDescription className='text-green-600 dark:text-green-400'>
                           All orders uploaded successfully!
                         </AlertDescription>
                       </Alert>
