@@ -118,7 +118,7 @@ export default function StaffPage() {
   return (
     <div className='min-h-screen lg:ml-16'>
 
-      {allStaff === undefined ? <div className="flex items-center justify-center px-4 py-32'"><Loader className="w-6 h-6 mr-3 animate-spin" /> Loading staff data...</div> :
+      {allStaff === undefined ? <div className="flex items-center justify-center px-4 py-32"><Loader className="w-6 h-6 mr-3 animate-spin" /> Loading staff data...</div> :
         <div className='max-w-7xl mx-auto'>
           <motion.div
             initial={{ opacity: 0, y: -20 }}
