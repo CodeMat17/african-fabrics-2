@@ -114,112 +114,113 @@ export default function StaffPage() {
     return { total: allStaff.length, available, busy, byRole };
   }, [allStaff]);
 
+
   return (
     <div className='min-h-screen lg:ml-16'>
-      <div className='max-w-7xl mx-auto'>
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className='mb-6 md:mb-8'>
-          <div className='flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4'>
-            <div>
-              <h1 className='text-4xl font-semibold mb-2'>STAFF</h1>
-              <p className='text-muted-foreground text-sm'>
-                {filteredStaff.length} staff members
-              </p>
+
+      {allStaff === undefined ? <div className="flex items-center justify-center px-4 py-32'"><Loader className="w-6 h-6 mr-3 animate-spin" /> Loading staff data...</div> :
+        <div className='max-w-7xl mx-auto'>
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className='mb-6 md:mb-8'>
+            <div className='flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4'>
+              <div>
+                <h1 className='text-4xl font-semibold mb-2'>STAFF</h1>
+                <p className='text-muted-foreground text-sm'>
+                  {filteredStaff.length} staff members
+                </p>
+              </div>
+              <Button
+                onClick={() => setIsAddStaffOpen(true)}
+                className='w-full sm:w-auto'>
+                <UserPlus className='w-4 h-4 mr-2' />
+                Add Staff
+              </Button>
             </div>
-            <Button
-              onClick={() => setIsAddStaffOpen(true)}
-              className='w-full sm:w-auto'>
-              <UserPlus className='w-4 h-4 mr-2' />
-              Add Staff
-            </Button>
-          </div>
+
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.1 }}
+              className='grid grid-cols-2 sm:grid-cols-3 gap-3 md:gap-4 mb-6'>
+              <StatsCard
+                label='Total Staff'
+                value={stats.total}
+                color='blue'
+                icon={<Users className='w-5 h-5' />}
+              />
+              <StatsCard
+                label='Available'
+                value={stats.available}
+                color='green'
+                icon={<CheckCircle2 className='w-5 h-5' />}
+              />
+              <StatsCard
+                label='Busy'
+                value={stats.busy}
+                color='red'
+                icon={<Clock className='w-5 h-5' />}
+              />
+            </motion.div>
+          </motion.div>
 
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-            className='grid grid-cols-2 sm:grid-cols-3 gap-3 md:gap-4 mb-6'>
-            <StatsCard
-              label='Total Staff'
-              value={stats.total}
-              color='blue'
-              icon={<Users className='w-5 h-5' />}
-            />
-            <StatsCard
-              label='Available'
-              value={stats.available}
-              color='green'
-              icon={<CheckCircle2 className='w-5 h-5' />}
-            />
-            <StatsCard
-              label='Busy'
-              value={stats.busy}
-              color='red'
-              icon={<Clock className='w-5 h-5' />}
-            />
+            transition={{ delay: 0.2 }}
+            className='grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 mb-6 md:mb-8'>
+            <div className='relative'>
+              <Search className='absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground' />
+              <Input
+                placeholder='Search staff by name...'
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className='pl-10'
+              />
+            </div>
+
+            <Select
+              value={filterType}
+              onValueChange={(value: FilterType) => setFilterType(value)}>
+              <SelectTrigger>
+                <div className='flex items-center gap-2'>
+                  <Filter className='w-4 h-4' />
+                  <SelectValue />
+                </div>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='all'>All Roles</SelectItem>
+                <SelectItem value='tailor'>Tailors</SelectItem>
+                <SelectItem value='beader'>Beaders</SelectItem>
+                <SelectItem value='fitter'>Fitters</SelectItem>
+                <SelectItem value='qc'>Quality Control</SelectItem>
+              </SelectContent>
+            </Select>
           </motion.div>
-        </motion.div>
 
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className='grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 mb-6 md:mb-8'>
-          <div className='relative'>
-            <Search className='absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground' />
-            <Input
-              placeholder='Search staff by name...'
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className='pl-10'
-            />
-          </div>
+            <motion.div
+              layout
+              className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4'>
+              <AnimatePresence mode='popLayout'>
+                {filteredStaff.map((staff, idx) => (
+                  <StaffCard key={staff._id} staff={staff} index={idx} />
+                ))}
+              </AnimatePresence>
+            </motion.div>
+          
 
-          <Select
-            value={filterType}
-            onValueChange={(value: FilterType) => setFilterType(value)}>
-            <SelectTrigger>
-              <div className='flex items-center gap-2'>
-                <Filter className='w-4 h-4' />
-                <SelectValue />
-              </div>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value='all'>All Roles</SelectItem>
-              <SelectItem value='tailor'>Tailors</SelectItem>
-              <SelectItem value='beader'>Beaders</SelectItem>
-              <SelectItem value='fitter'>Fitters</SelectItem>
-              <SelectItem value='qc'>Quality Control</SelectItem>
-            </SelectContent>
-          </Select>
-        </motion.div>
-
-        {allStaff === undefined ? <div className="flex justify-center px-4 py-32 items-center">
-          <Loader className="w-6 h-6 mr-3 animate-spin" /> Loading staff data...
-        </div> :
-          <motion.div
-            layout
-            className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4'>
-            <AnimatePresence mode='popLayout'>
-              {filteredStaff.map((staff, idx) => (
-                <StaffCard key={staff._id} staff={staff} index={idx} />
-              ))}
-            </AnimatePresence>
-          </motion.div>
-        }
-
-        {filteredStaff.length === 0 && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className='text-center py-20'>
-            <Users className='w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-50' />
-            <p className='text-muted-foreground'>No staff members found</p>
-          </motion.div>
-        )}
-      </div>
+          {filteredStaff.length === 0 && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className='text-center py-20'>
+              <Users className='w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-50' />
+              <p className='text-muted-foreground'>No staff members found</p>
+            </motion.div>
+          )}
+        </div>
+      }
 
       <AddStaffSheet open={isAddStaffOpen} onOpenChange={setIsAddStaffOpen} />
     </div>
