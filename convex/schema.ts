@@ -19,7 +19,16 @@ export default defineSchema({
   })
     .index("by_role", ["role"])
     .index("by_phone", ["phone"])
+    .index("by_active", ["isActive"])
     .index("by_active_role", ["isActive", "role"]),
+
+   staffPerformanceCache: defineTable({
+    staffId: v.id("staff"),
+    totalOrders: v.number(),
+    avgDuration: v.number(),
+    lastCalculated: v.number(),
+  }).index("by_staff", ["staffId"]),
+
 
   orders: defineTable({
     orderNumber: v.string(),
@@ -55,7 +64,6 @@ export default defineSchema({
         trouserLength: v.optional(v.string()),
         thigh: v.optional(v.string()),
         neck: v.optional(v.string()),
-
       }),
     ),
 
@@ -102,46 +110,94 @@ export default defineSchema({
 
     progress: v.number(), // 0 → 100
 
-    currentAssignedStaffId: v.optional(v.id("staff")),
-    currentAssignedStaffRole: v.optional(
-      v.union(
-        v.literal("tailor"),
-        v.literal("beader"),
-        v.literal("fitter"),
-        v.literal("qc"),
-      ),
+    // ✅ PROFESSIONAL: Staff assignments embedded in order
+    assignedTailor: v.optional(
+      v.object({
+        staffId: v.id("staff"),
+        staffName: v.string(),
+        assignedAt: v.number(),
+        completedAt: v.optional(v.number()),
+        duration: v.optional(v.number()),
+        notes: v.optional(v.string()),
+      }),
     ),
+
+    assignedBeader: v.optional(
+      v.object({
+        staffId: v.id("staff"),
+        staffName: v.string(),
+        assignedAt: v.number(),
+        completedAt: v.optional(v.number()),
+        duration: v.optional(v.number()),
+        notes: v.optional(v.string()),
+      }),
+    ),
+
+    assignedFitter: v.optional(
+      v.object({
+        staffId: v.id("staff"),
+        staffName: v.string(),
+        assignedAt: v.number(),
+        completedAt: v.optional(v.number()),
+        duration: v.optional(v.number()),
+        notes: v.optional(v.string()),
+      }),
+    ),
+
+    assignedQC: v.optional(
+      v.object({
+        staffId: v.id("staff"),
+        staffName: v.string(),
+        assignedAt: v.number(),
+        completedAt: v.optional(v.number()),
+        duration: v.optional(v.number()),
+        notes: v.optional(v.string()),
+      }),
+    ),
+
+    // Current assignment (for quick "who's working on this?" queries)
+    currentlyAssignedTo: v.optional(
+      v.object({
+        staffId: v.id("staff"),
+        staffName: v.string(),
+        stage: v.union(
+          v.literal("tailoring"),
+          v.literal("beading"),
+          v.literal("fitting"),
+          v.literal("qc"),
+        ),
+      }),
+    ),
+
+    // currentAssignedStaffId: v.optional(v.id("staff")),
+    // currentAssignedStaffRole: v.optional(
+    //   v.union(
+    //     v.literal("tailor"),
+    //     v.literal("beader"),
+    //     v.literal("fitter"),
+    //     v.literal("qc"),
+    //   ),
+    // ),
 
     specialInstructions: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
     completed: v.optional(v.boolean()),
+    completedAt: v.optional(v.number()),
     collected: v.optional(v.boolean()),
     collectedAt: v.optional(v.number()),
   })
-    .index("by_stage", ["workflowStage"])
-    .index("by_order_number", ["orderNumber"])
+    .index("by_number", ["orderNumber"])
     .index("by_collected", ["collected"])
-    .index("by_current_staff", ["currentAssignedStaffId"])
-    .index("by_stage_and_collected", ["workflowStage", "collected"]),
+    .index("by_stage", ["workflowStage"])
+    .index("by_customer", ["name"])
+    .index("by_created", ["createdAt"])
 
-  // workflowQueue: defineTable({
-  //   orderId: v.id("orders"),
-  //   stage: v.union(
-  //     v.literal("tailoring"),
-  //     v.literal("beading"),
-  //     v.literal("fitting"),
-  //     v.literal("qc"),
-  //   ),
-  //   staffId: v.id("staff"),
-  //   status: v.union(v.literal("in_progress"), v.literal("done")),
-  //   startedAt: v.optional(v.number()),
-  //   completedAt: v.optional(v.number()),
-  // })
-  //   .index("by_order", ["orderId"])
-  //   .index("by_stage", ["stage"])
-  //   .index("by_staff", ["staffId"])
-  //   .index("by_staff_status", ["staffId", "status"]),
+    // ✅ NEW: Indexes for staff queries
+    .index("by_tailor", ["assignedTailor.staffId"])
+    .index("by_beader", ["assignedBeader.staffId"])
+    .index("by_fitter", ["assignedFitter.staffId"])
+    .index("by_qc", ["assignedQC.staffId"]),
 
   // Tracks the journey of each order through stages
   stageHistory: defineTable({
@@ -184,6 +240,8 @@ export default defineSchema({
 
   // Single source of truth for staff availability
   // A staff is "busy" if they have an active assignment
+  // convex/schema.ts - Updated staffAssignments table
+
   staffAssignments: defineTable({
     staffId: v.id("staff"),
     staffName: v.string(),
@@ -193,31 +251,26 @@ export default defineSchema({
       v.literal("fitter"),
       v.literal("qc"),
     ),
-
     orderId: v.id("orders"),
     orderNumber: v.string(),
-
     stage: v.union(
       v.literal("tailoring"),
       v.literal("beading"),
       v.literal("fitting"),
       v.literal("qc"),
     ),
-
-    // Assignment status
     status: v.union(
-      v.literal("active"), // Currently working on this
-      v.literal("completed"), // Finished with this assignment
+      v.literal("active"),
+      v.literal("completed"),
+      v.literal("cancelled"), // ✅ NEW: For when orders are deleted
     ),
-
     assignedAt: v.number(),
     completedAt: v.optional(v.number()),
   })
-    .index("by_staff", ["staffId"])
     .index("by_order", ["orderId"])
-    .index("by_staff_and_status", ["staffId", "status"])
+    .index("by_staff", ["staffId"])
     .index("by_status", ["status"])
-    .index("by_stage", ["stage"]),
+    .index("by_staff_and_status", ["staffId", "status"]),
 });
 
 /**

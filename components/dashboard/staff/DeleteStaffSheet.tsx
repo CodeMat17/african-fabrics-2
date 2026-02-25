@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import type { Doc } from "@/convex/_generated/dataModel";
+import { Doc } from "@/convex/_generated/dataModel";
 import {
   Sheet,
   SheetContent,
@@ -12,34 +12,51 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2, Trash2, Archive } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+
+type Staff = Doc<"staff">;
 
 interface Props {
-  staff: Doc<"staff">;
+  staff: Staff;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
 export default function DeleteStaffSheet({ staff, open, onOpenChange }: Props) {
-  const deleteStaff = useMutation(api.staff.deleteStaff);
+  const [deleteType, setDeleteType] = useState<"soft" | "hard">("soft");
   const [loading, setLoading] = useState(false);
+
+  const deleteStaff = useMutation(api.staff.deleteStaff);
 
   const handleDelete = async () => {
     setLoading(true);
     try {
-      await deleteStaff({ staffId: staff._id });
-
-      toast.success("Staff Member Deactivated", {
-        description: `${staff.name} has been successfully deactivated`,
+      const result = await deleteStaff({
+        staffId: staff._id,
+        forceDelete: deleteType === "hard",
       });
+
+      // ✅ FIX: Close sheet IMMEDIATELY before showing toast
+      onOpenChange(false);
+
+      if (result.deletionType === "soft") {
+        toast.success("Staff Deactivated", {
+          description: result.message,
+        });
+      } else {
+        toast.success("Staff Deleted", {
+          description: result.message,
+        });
+      }
+
       onOpenChange(false);
     } catch (error) {
-      console.error("Error deleting staff:", error);
       toast.error("Delete Failed", {
-        description:
-          (error as Error).message ||
-          "Failed to delete staff member. They may have active assignments.",
+        description: (error as Error).message,
       });
     } finally {
       setLoading(false);
@@ -48,65 +65,103 @@ export default function DeleteStaffSheet({ staff, open, onOpenChange }: Props) {
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className='w-full sm:max-w-md overflow-y-auto'>
+      <SheetContent className='sm:max-w-[500px]'>
         <SheetHeader>
-          <SheetTitle className='text-2xl font-bold text-red-600 dark:text-red-400'>
+          <SheetTitle className='flex items-center gap-2 text-red-600 dark:text-red-400'>
+            <AlertTriangle className='w-5 h-5' />
             Delete Staff Member
           </SheetTitle>
-          <SheetDescription>This action cannot be undone</SheetDescription>
+          <SheetDescription>
+            Choose how to remove this staff member from the system
+          </SheetDescription>
         </SheetHeader>
 
-        <div className='space-y-6 mb-6 px-4'>
-          {/* Warning Icon */}
-          <div className='flex justify-center'>
-            <div className='w-16 h-16 rounded-full bg-red-100 dark:bg-red-950 border-2 border-red-200 dark:border-red-900 flex items-center justify-center'>
-              <AlertTriangle className='w-8 h-8 text-red-600 dark:text-red-400' />
+        <div className='space-y-3 px-4 pb-6 overflow-y-scroll'>
+          {/* Staff Info */}
+          <div className='p-3 rounded-lg border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950'>
+            <div className='flex items-start justify-between gap-3'>
+              <div>
+                <h3 className='font-semibold text-lg'>{staff.name}</h3>
+                <p className='text-sm text-muted-foreground'>{staff.phone}</p>
+                <Badge className='mt-2 capitalize'>{staff.role}</Badge>
+              </div>
             </div>
           </div>
 
-          {/* Warning Message */}
-          <div className='bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-900 rounded-lg p-4'>
-            <p className='text-sm text-center text-red-900 dark:text-red-100'>
-              This will <strong>deactivate</strong> the staff member. They will
-              no longer appear in active lists, but historical data will be
-              preserved.
-            </p>
-          </div>
+          {/* Deletion Options */}
+          <Tabs
+            value={deleteType}
+            onValueChange={(v) => setDeleteType(v as "soft" | "hard")}
+            className='w-full'>
+            <TabsList className='grid w-full grid-cols-2'>
+              <TabsTrigger value='soft' className='gap-2'>
+                <Archive className='w-4 h-4' />
+                Deactivate
+              </TabsTrigger>
+              <TabsTrigger value='hard' className='gap-2'>
+                <Trash2 className='w-4 h-4' />
+                Delete
+              </TabsTrigger>
+            </TabsList>
 
-          {/* Staff Details */}
-          <div className='space-y-1 bg-muted/50 border rounded-lg p-4'>
-            <div className='flex justify-between text-sm'>
-              <span className='text-muted-foreground'>Name:</span>
-              <span className='font-semibold'>{staff.name}</span>
-            </div>
-            <div className='flex justify-between text-sm'>
-              <span className='text-muted-foreground'>Phone:</span>
-              <span className='font-semibold'>{staff.phone}</span>
-            </div>
-            <div className='flex justify-between text-sm'>
-              <span className='text-muted-foreground'>Role:</span>
-              <span className='font-semibold capitalize'>{staff.role}</span>
-            </div>
-            <div className='flex justify-between text-sm'>
-              <span className='text-muted-foreground'>Email:</span>
-           
-            </div>
-          </div>
+            <TabsContent value='soft' className='space-y-4'>
+              <Alert className='border-orange-200 dark:border-orange-900 bg-orange-50 dark:bg-orange-950'>
+                <Archive className='w-4 h-4 text-orange-600 dark:text-orange-400' />
+                <AlertDescription className='text-orange-900 dark:text-orange-100'>
+                  <strong>Recommended:</strong> Deactivate keeps all historical
+                  data intact.
+                </AlertDescription>
+              </Alert>
 
-          {/* Confirmation Message */}
-          <div className='text-center space-y-2'>
-            <p className='text-sm font-semibold text-red-600 dark:text-red-400'>
-              Are you sure you want to deactivate this staff member?
-            </p>
-            <p className='text-xs text-muted-foreground'>
-              They must not have any active assignments to proceed.
-            </p>
-          </div>
+              <div className='space-y-3 text-xs'>
+                <h4 className='font-semibold'>What happens:</h4>
+                <ul className='space-y-2 list-disc list-inside text-muted-foreground'>
+                  <li>Staff is marked as inactive</li>
+                  <li>Cannot be assigned to new orders</li>
+                  <li>All historical data is preserved</li>
+                  <li>Past orders show correct staff information</li>
+                  <li>Can be reactivated later</li>
+                </ul>
+              </div>
+            </TabsContent>
+
+            <TabsContent value='hard' className='space-y-4'>
+              <Alert
+                variant='destructive'
+                className='border-red-200 dark:border-red-900'>
+                <AlertTriangle className='w-4 h-4' />
+                <AlertDescription>
+                  <strong>Warning:</strong> This action cannot be undone!
+                </AlertDescription>
+              </Alert>
+
+              <div className='space-y-3 text-sm'>
+                <h4 className='font-semibold'>What happens:</h4>
+                <ul className='space-y-2 list-disc list-inside text-muted-foreground'>
+                  <li>Staff is permanently deleted</li>
+                  <li>All assignment records are removed</li>
+                  <li>
+                    Stage history still shows their name (but link is broken)
+                  </li>
+                  <li className='text-red-600 dark:text-red-400 font-medium'>
+                    Cannot be recovered
+                  </li>
+                </ul>
+              </div>
+
+              <Alert className='border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950'>
+                <AlertDescription className='text-blue-900 dark:text-blue-100 text-xs'>
+                  <strong>Note:</strong> Hard delete only works if staff has no
+                  historical assignments. If they do, they will be deactivated
+                  instead.
+                </AlertDescription>
+              </Alert>
+            </TabsContent>
+          </Tabs>
 
           {/* Action Buttons */}
-          <div className='flex gap-3 pt-4'>
+          <div className='flex gap-3 pt-4 border-t'>
             <Button
-              type='button'
               variant='outline'
               onClick={() => onOpenChange(false)}
               disabled={loading}
@@ -114,17 +169,25 @@ export default function DeleteStaffSheet({ staff, open, onOpenChange }: Props) {
               Cancel
             </Button>
             <Button
-              type='button'
               onClick={handleDelete}
               disabled={loading}
-              className='flex-1 bg-red-600 hover:bg-red-700 text-white'>
+              variant='destructive'
+              className='flex-1'>
               {loading ? (
                 <>
                   <Loader2 className='w-4 h-4 mr-2 animate-spin' />
-                  Deleting...
+                  Processing...
+                </>
+              ) : deleteType === "soft" ? (
+                <>
+                  <Archive className='w-4 h-4 mr-2' />
+                  Deactivate
                 </>
               ) : (
-                "Delete Staff"
+                <>
+                  <Trash2 className='w-4 h-4 mr-2' />
+                  Delete
+                </>
               )}
             </Button>
           </div>

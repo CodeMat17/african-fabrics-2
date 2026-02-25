@@ -39,9 +39,12 @@ import {
 import AddStaffSheet from "@/components/dashboard/staff/AddStaffSheet";
 import UpdateStaffSheet from "@/components/dashboard/staff/UpdateStaffSheet";
 import DeleteStaffSheet from "@/components/dashboard/staff/DeleteStaffSheet";
+import { useAuth } from "@clerk/nextjs";
 
 type Staff = Doc<"staff"> & {
   availability: "available" | "busy";
+  totalCompleted: number;
+  avgCompletionTimeHours: number;
   currentAssignment?: {
     orderId: string;
     orderNumber: string;
@@ -63,7 +66,8 @@ export default function StaffPage() {
   const [filterType, setFilterType] = useState<FilterType>("all");
   const [isAddStaffOpen, setIsAddStaffOpen] = useState(false);
 
-  const allStaff = useQuery(api.staff.getAllStaff);
+  // ✅ FIX: Pass empty object
+  const allStaff = useQuery(api.staff.getAllStaff, {});
 
   const filteredStaff = useMemo(() => {
     if (!allStaff) return [];
@@ -275,10 +279,14 @@ function StatsCard({
 }
 
 function StaffCard({ staff, index }: { staff: Staff; index: number }) {
+
+ const { sessionClaims } = useAuth();
+  const isAdmin = sessionClaims?.metadata?.role === "admin";
+  const isConsultant = sessionClaims?.metadata?.role === "consultant";
+
   const [updateOpen, setUpdateOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
-  const workload = useQuery(api.staff.getStaffWorkload, { staffId: staff._id });
   const isBusy = staff.availability === "busy";
   const roleConfig = ROLE_CONFIG[staff.role as keyof typeof ROLE_CONFIG];
 
@@ -347,29 +355,33 @@ function StaffCard({ staff, index }: { staff: Staff; index: number }) {
                 </div>
               </div>
 
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant='ghost'
-                    size='icon'
-                    className='h-8 w-8 shrink-0'>
-                    <MoreVertical className='h-4 w-4' />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align='end'>
-                  <DropdownMenuItem onClick={() => setUpdateOpen(true)}>
-                    <Edit className='mr-2 h-4 w-4' />
-                    Update
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    onClick={() => setDeleteOpen(true)}
-                    className='text-red-600 focus:text-red-600'>
-                    <Trash2 className='mr-2 h-4 w-4' />
-                    Delete
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              
+              {
+                (isAdmin || isConsultant) &&
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant='ghost'
+                      size='icon'
+                      className='h-8 w-8 shrink-0'>
+                      <MoreVertical className='h-4 w-4' />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align='end'>
+                    <DropdownMenuItem onClick={() => setUpdateOpen(true)}>
+                      <Edit className='mr-2 h-4 w-4' />
+                      Update
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() => setDeleteOpen(true)}
+                      className='text-red-600 focus:text-red-600'>
+                      <Trash2 className='mr-2 h-4 w-4' />
+                      Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              }
             </div>
           </CardHeader>
 
@@ -388,20 +400,20 @@ function StaffCard({ staff, index }: { staff: Staff; index: number }) {
               </div>
             )}
 
-            {workload && (
+            {staff.totalCompleted > 0 && (
               <div className='grid grid-cols-2 gap-3 pt-3 border-t'>
                 <div>
                   <p className='text-xs text-muted-foreground mb-1'>
                     Completed
                   </p>
                   <p className='text-lg font-bold text-cyan-600 dark:text-cyan-400'>
-                    {workload.statistics.totalCompleted}
+                    {staff.totalCompleted}
                   </p>
                 </div>
                 <div>
                   <p className='text-xs text-muted-foreground mb-1'>Avg Time</p>
                   <p className='text-lg font-bold text-purple-600 dark:text-purple-400'>
-                    {workload.statistics.avgCompletionTimeHours.toFixed(1)}h
+                    {staff.avgCompletionTimeHours.toFixed(1)}h
                   </p>
                 </div>
               </div>

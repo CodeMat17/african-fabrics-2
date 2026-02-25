@@ -13,11 +13,21 @@ type WorkflowStage =
   | "completed";
 type StaffRole = "tailor" | "beader" | "fitter" | "qc";
 
-const STAGE_ROLE_MAP: Record<string, StaffRole> = {
-  tailoring: "tailor",
-  beading: "beader",
-  fitting: "fitter",
-  qc: "qc",
+// ✅ Type-safe assignment structure
+type StaffAssignment = {
+  staffId: Id<"staff">;
+  staffName: string;
+  assignedAt: number;
+  completedAt?: number;
+  duration?: number;
+  notes?: string;
+};
+
+// ✅ Type-safe current assignment structure
+type CurrentAssignment = {
+  staffId: Id<"staff">;
+  staffName: string;
+  stage: "tailoring" | "beading" | "fitting" | "qc";
 };
 
 const STAGE_PROGRESS_MAP: Record<WorkflowStage, number> = {
@@ -139,6 +149,7 @@ export const createOrder = mutation({
 
       workflowStage: "pending",
       progress: 0,
+
       createdAt: now,
       updatedAt: now,
     });
@@ -209,29 +220,73 @@ export const getOrderById = query({
     const order = await ctx.db.get(orderId);
     if (!order) return null;
 
-    // Get stage history
-    const stageHistory = await ctx.db
-      .query("stageHistory")
-      .withIndex("by_order", (q) => q.eq("orderId", orderId))
-      .collect();
+    const timeline: Array<{
+      stage: string;
+      staffName: string;
+      staffId: Id<"staff">;
+      assignedAt: number;
+      completedAt?: number;
+      duration?: number;
+      notes?: string;
+      status: "completed" | "in_progress";
+    }> = [];
 
-    // Get current assignment if any
-    let currentAssignment = null;
-    if (order.currentAssignedStaffId) {
-      const staff = await ctx.db.get(order.currentAssignedStaffId);
-      if (staff) {
-        currentAssignment = {
-          staffId: staff._id,
-          staffName: staff.name,
-          staffRole: staff.role,
-        };
-      }
+    if (order.assignedTailor) {
+      timeline.push({
+        stage: "tailoring",
+        staffName: order.assignedTailor.staffName,
+        staffId: order.assignedTailor.staffId,
+        assignedAt: order.assignedTailor.assignedAt,
+        completedAt: order.assignedTailor.completedAt,
+        duration: order.assignedTailor.duration,
+        notes: order.assignedTailor.notes,
+        status: order.assignedTailor.completedAt ? "completed" : "in_progress",
+      });
+    }
+
+    if (order.assignedBeader) {
+      timeline.push({
+        stage: "beading",
+        staffName: order.assignedBeader.staffName,
+        staffId: order.assignedBeader.staffId,
+        assignedAt: order.assignedBeader.assignedAt,
+        completedAt: order.assignedBeader.completedAt,
+        duration: order.assignedBeader.duration,
+        notes: order.assignedBeader.notes,
+        status: order.assignedBeader.completedAt ? "completed" : "in_progress",
+      });
+    }
+
+    if (order.assignedFitter) {
+      timeline.push({
+        stage: "fitting",
+        staffName: order.assignedFitter.staffName,
+        staffId: order.assignedFitter.staffId,
+        assignedAt: order.assignedFitter.assignedAt,
+        completedAt: order.assignedFitter.completedAt,
+        duration: order.assignedFitter.duration,
+        notes: order.assignedFitter.notes,
+        status: order.assignedFitter.completedAt ? "completed" : "in_progress",
+      });
+    }
+
+    if (order.assignedQC) {
+      timeline.push({
+        stage: "qc",
+        staffName: order.assignedQC.staffName,
+        staffId: order.assignedQC.staffId,
+        assignedAt: order.assignedQC.assignedAt,
+        completedAt: order.assignedQC.completedAt,
+        duration: order.assignedQC.duration,
+        notes: order.assignedQC.notes,
+        status: order.assignedQC.completedAt ? "completed" : "in_progress",
+      });
     }
 
     return {
       ...order,
-      stageHistory: stageHistory.sort((a, b) => a.startedAt - b.startedAt),
-      currentAssignment,
+      timeline: timeline.sort((a, b) => a.assignedAt - b.assignedAt),
+      currentAssignment: order.currentlyAssignedTo || null,
     };
   },
 });
@@ -271,7 +326,6 @@ export const updateOrder = mutation({
 
     let orderNumber: string | undefined;
 
-    // Regenerate order number if name changed
     if (payload.name && payload.name !== order.name) {
       orderNumber = await generateOrderNumber(ctx, payload.name);
     }
@@ -301,39 +355,16 @@ export const deleteOrder = mutation({
       throw new Error("Cannot delete collected orders");
     }
 
-    // Check if order has active assignment
-    if (order.currentAssignedStaffId) {
+    if (order.currentlyAssignedTo) {
       throw new Error(
-        "Cannot delete order with active assignment. " +
-          "Please complete or cancel the current stage first.",
+        `Cannot delete order with active assignment. ${order.currentlyAssignedTo.staffName} is currently working on this order. Please complete or cancel the assignment first.`,
       );
     }
 
     const storageId = order.fabricSample?.fabricPhotoStorageId;
 
-    // Delete fabric image from storage if it exists
     if (storageId) {
       await ctx.storage.delete(storageId);
-    }
-
-    // Delete stage history
-    const stageHistory = await ctx.db
-      .query("stageHistory")
-      .withIndex("by_order", (q) => q.eq("orderId", orderId))
-      .collect();
-
-    for (const stage of stageHistory) {
-      await ctx.db.delete(stage._id);
-    }
-
-    // Delete staff assignments
-    const assignments = await ctx.db
-      .query("staffAssignments")
-      .withIndex("by_order", (q) => q.eq("orderId", orderId))
-      .collect();
-
-    for (const assignment of assignments) {
-      await ctx.db.delete(assignment._id);
     }
 
     await ctx.db.delete(orderId);
@@ -368,55 +399,107 @@ export const assignStaffToOrder = mutation({
       throw new Error("Staff member is not active");
     }
 
-    // Check if staff already has an active assignment
-    const existingAssignment = await ctx.db
-      .query("staffAssignments")
-      .withIndex("by_staff_and_status", (q) =>
-        q.eq("staffId", staffId).eq("status", "active"),
-      )
-      .first();
+    // Check if staff is already busy
+    const orders = await ctx.db.query("orders").collect();
+    const staffCurrentOrder = orders.find(
+      (o) => o.currentlyAssignedTo?.staffId === staffId,
+    );
 
-    if (existingAssignment) {
+    if (staffCurrentOrder) {
       throw new Error(
-        `Staff member is already assigned to order ${existingAssignment.orderNumber}`,
+        `Staff member is already assigned to order ${staffCurrentOrder.orderNumber}`,
       );
     }
 
-    // Determine the current stage
-    const currentStage = order.workflowStage;
+    if (order.currentlyAssignedTo) {
+      throw new Error(
+        `Order already has ${order.currentlyAssignedTo.staffName} assigned. Please complete current stage first.`,
+      );
+    }
 
-    if (currentStage === "pending") {
-      // Start with tailoring
+    const currentStage = order.workflowStage;
+    const now = Date.now();
+
+    // ✅ CORRECT LOGIC: When order is IN a stage, you assign the worker for THAT stage
+    type AssignmentFieldKey =
+      | "assignedTailor"
+      | "assignedBeader"
+      | "assignedFitter"
+      | "assignedQC";
+    type StageKey = "tailoring" | "beading" | "fitting" | "qc";
+
+    let assignmentField: AssignmentFieldKey;
+    let stageToWork: StageKey;
+
+    // The KEY insight: order.workflowStage tells you what NEEDS to be done
+    // So if stage = "tailoring", you need a TAILOR to work on it
+    if (currentStage === "pending" || currentStage === "tailoring") {
+      // Order needs tailoring work
       if (staff.role !== "tailor") {
-        throw new Error("Order must start with a tailor");
+        throw new Error("This order needs a tailor");
       }
-      await startStage(ctx, orderId, staffId, "tailoring");
+      assignmentField = "assignedTailor";
+      stageToWork = "tailoring";
+    } else if (currentStage === "beading") {
+      // Order needs beading work
+      if (staff.role !== "beader") {
+        throw new Error("This order needs a beader");
+      }
+      // Make sure tailoring is complete
+      if (!order.assignedTailor?.completedAt) {
+        throw new Error("Tailoring must be completed first");
+      }
+      assignmentField = "assignedBeader";
+      stageToWork = "beading";
+    } else if (currentStage === "fitting") {
+      // Order needs fitting work
+      if (staff.role !== "fitter") {
+        throw new Error("This order needs a fitter");
+      }
+      // Make sure beading is complete
+      if (!order.assignedBeader?.completedAt) {
+        throw new Error("Beading must be completed first");
+      }
+      assignmentField = "assignedFitter";
+      stageToWork = "fitting";
+    } else if (currentStage === "qc") {
+      // Order needs QC work
+      if (staff.role !== "qc") {
+        throw new Error("This order needs QC");
+      }
+      // Make sure fitting is complete
+      if (!order.assignedFitter?.completedAt) {
+        throw new Error("Fitting must be completed first");
+      }
+      assignmentField = "assignedQC";
+      stageToWork = "qc";
     } else if (currentStage === "completed") {
       throw new Error("Order is already completed");
     } else {
-      // Check if the staff role matches the current stage
-      const requiredRole = STAGE_ROLE_MAP[currentStage];
-      if (staff.role !== requiredRole) {
-        throw new Error(
-          `Current stage requires a ${requiredRole}, but staff is a ${staff.role}`,
-        );
-      }
-
-      // Check if there's already an active assignment for this order
-      if (order.currentAssignedStaffId) {
-        throw new Error("Order already has an active staff assignment");
-      }
-
-      // Start the current stage with this staff
-      await startStage(
-        ctx,
-        orderId,
-        staffId,
-        currentStage as "tailoring" | "beading" | "fitting" | "qc",
-      );
+      throw new Error("Invalid workflow stage");
     }
 
-    return { success: true };
+    const newAssignment: StaffAssignment = {
+      staffId: staff._id,
+      staffName: staff.name,
+      assignedAt: now,
+    };
+
+    const currentAssignment: CurrentAssignment = {
+      staffId: staff._id,
+      staffName: staff.name,
+      stage: stageToWork,
+    };
+
+    await ctx.db.patch(orderId, {
+      workflowStage: stageToWork,
+      progress: STAGE_PROGRESS_MAP[stageToWork],
+      [assignmentField]: newAssignment,
+      currentlyAssignedTo: currentAssignment,
+      updatedAt: now,
+    });
+
+    return { success: true, stage: stageToWork };
   },
 });
 
@@ -433,66 +516,76 @@ export const completeCurrentStage = mutation({
       throw new Error("Order not found");
     }
 
-    if (!order.currentAssignedStaffId) {
-      throw new Error("No active staff assignment for this order");
+    if (!order.currentlyAssignedTo) {
+      throw new Error("No active assignment for this order");
     }
 
     const currentStage = order.workflowStage;
-    if (currentStage === "pending" || currentStage === "completed") {
+    const now = Date.now();
+
+    type AssignmentFieldKey =
+      | "assignedTailor"
+      | "assignedBeader"
+      | "assignedFitter"
+      | "assignedQC";
+
+    let assignmentField: AssignmentFieldKey;
+    let assignment: StaffAssignment | undefined;
+
+    if (currentStage === "tailoring") {
+      assignmentField = "assignedTailor";
+      assignment = order.assignedTailor;
+    } else if (currentStage === "beading") {
+      assignmentField = "assignedBeader";
+      assignment = order.assignedBeader;
+    } else if (currentStage === "fitting") {
+      assignmentField = "assignedFitter";
+      assignment = order.assignedFitter;
+    } else if (currentStage === "qc") {
+      assignmentField = "assignedQC";
+      assignment = order.assignedQC;
+    } else {
       throw new Error("Cannot complete stage in current workflow state");
     }
 
-    const now = Date.now();
-
-    // Complete the current stage in stage history
-    const activeStageHistory = await ctx.db
-      .query("stageHistory")
-      .withIndex("by_order_and_stage", (q) =>
-        q.eq("orderId", orderId).eq("stage", currentStage as "tailoring"),
-      )
-      .filter((q) => q.eq(q.field("status"), "in_progress"))
-      .first();
-
-    if (activeStageHistory) {
-      const duration = now - activeStageHistory.startedAt;
-      await ctx.db.patch(activeStageHistory._id, {
-        completedAt: now,
-        duration,
-        status: "completed",
-        notes,
-      });
+    if (!assignment) {
+      throw new Error("No assignment found for current stage");
     }
 
-    // Complete the staff assignment
-    const activeAssignment = await ctx.db
-      .query("staffAssignments")
-      .withIndex("by_staff_and_status", (q) =>
-        q.eq("staffId", order.currentAssignedStaffId!).eq("status", "active"),
-      )
-      .first();
-
-    if (activeAssignment) {
-      await ctx.db.patch(activeAssignment._id, {
-        status: "completed",
-        completedAt: now,
-      });
-    }
-
-    // Move to next stage
-    const nextStage = getNextStage(currentStage);
+    const completedAssignment: StaffAssignment = {
+      ...assignment,
+      completedAt: now,
+      duration: now - assignment.assignedAt,
+      notes: notes || assignment.notes,
+    };
 
     await ctx.db.patch(orderId, {
-      workflowStage: nextStage,
-      progress: STAGE_PROGRESS_MAP[nextStage],
-      currentAssignedStaffId: undefined,
-      currentAssignedStaffRole: undefined,
+      [assignmentField]: completedAssignment,
+      currentlyAssignedTo: undefined,
       updatedAt: now,
     });
+
+    const nextStage = getNextStage(currentStage);
+
+    if (nextStage !== currentStage) {
+      await ctx.db.patch(orderId, {
+        workflowStage: nextStage,
+        progress: STAGE_PROGRESS_MAP[nextStage],
+        updatedAt: now,
+      });
+
+      if (nextStage === "completed") {
+        await ctx.db.patch(orderId, {
+          completedAt: now,
+        });
+      }
+    }
 
     return {
       success: true,
       nextStage,
       orderCompleted: nextStage === "completed",
+      duration: completedAssignment.duration,
     };
   },
 });
@@ -528,30 +621,77 @@ export const getOrderTimeline = query({
     const order = await ctx.db.get(orderId);
     if (!order) return null;
 
-    const stageHistory = await ctx.db
-      .query("stageHistory")
-      .withIndex("by_order", (q) => q.eq("orderId", orderId))
-      .collect();
+    type TimelineEntry = {
+      stage: string;
+      staffName: string;
+      staffRole: StaffRole;
+      startedAt: number;
+      completedAt?: number;
+      duration?: number;
+      status: "completed" | "in_progress";
+      notes?: string;
+    };
 
-    const timeline = stageHistory
-      .sort((a, b) => a.startedAt - b.startedAt)
-      .map((stage) => ({
-        stage: stage.stage,
-        staffName: stage.assignedStaffName,
-        staffRole: stage.assignedStaffRole,
-        startedAt: stage.startedAt,
-        completedAt: stage.completedAt,
-        duration: stage.duration,
-        status: stage.status,
-        notes: stage.notes,
-      }));
+    const timeline: TimelineEntry[] = [];
+
+    if (order.assignedTailor) {
+      timeline.push({
+        stage: "tailoring",
+        staffName: order.assignedTailor.staffName,
+        staffRole: "tailor",
+        startedAt: order.assignedTailor.assignedAt,
+        completedAt: order.assignedTailor.completedAt,
+        duration: order.assignedTailor.duration,
+        status: order.assignedTailor.completedAt ? "completed" : "in_progress",
+        notes: order.assignedTailor.notes,
+      });
+    }
+
+    if (order.assignedBeader) {
+      timeline.push({
+        stage: "beading",
+        staffName: order.assignedBeader.staffName,
+        staffRole: "beader",
+        startedAt: order.assignedBeader.assignedAt,
+        completedAt: order.assignedBeader.completedAt,
+        duration: order.assignedBeader.duration,
+        status: order.assignedBeader.completedAt ? "completed" : "in_progress",
+        notes: order.assignedBeader.notes,
+      });
+    }
+
+    if (order.assignedFitter) {
+      timeline.push({
+        stage: "fitting",
+        staffName: order.assignedFitter.staffName,
+        staffRole: "fitter",
+        startedAt: order.assignedFitter.assignedAt,
+        completedAt: order.assignedFitter.completedAt,
+        duration: order.assignedFitter.duration,
+        status: order.assignedFitter.completedAt ? "completed" : "in_progress",
+        notes: order.assignedFitter.notes,
+      });
+    }
+
+    if (order.assignedQC) {
+      timeline.push({
+        stage: "qc",
+        staffName: order.assignedQC.staffName,
+        staffRole: "qc",
+        startedAt: order.assignedQC.assignedAt,
+        completedAt: order.assignedQC.completedAt,
+        duration: order.assignedQC.duration,
+        status: order.assignedQC.completedAt ? "completed" : "in_progress",
+        notes: order.assignedQC.notes,
+      });
+    }
 
     return {
       orderNumber: order.orderNumber,
       customerName: order.name,
       currentStage: order.workflowStage,
       progress: order.progress,
-      timeline,
+      timeline: timeline.sort((a, b) => a.startedAt - b.startedAt),
     };
   },
 });
@@ -577,11 +717,9 @@ export const getDashboardStats = query({
         .length,
     };
 
-    // Get all staff
     const allStaff = await ctx.db.query("staff").collect();
     const activeStaff = allStaff.filter((s) => s.isActive);
 
-    // Get staff workload
     const staffByRole = {
       tailor: activeStaff.filter((s) => s.role === "tailor").length,
       beader: activeStaff.filter((s) => s.role === "beader").length,
@@ -589,13 +727,7 @@ export const getDashboardStats = query({
       qc: activeStaff.filter((s) => s.role === "qc").length,
     };
 
-    // Get busy staff count
-    const activeAssignments = await ctx.db
-      .query("staffAssignments")
-      .withIndex("by_status", (q) => q.eq("status", "active"))
-      .collect();
-
-    const busyStaff = activeAssignments.length;
+    const busyStaff = allOrders.filter((o) => o.currentlyAssignedTo).length;
 
     return {
       orders: {
@@ -616,55 +748,6 @@ export const getDashboardStats = query({
 });
 
 /* ==================== HELPER FUNCTIONS ==================== */
-
-async function startStage(
-  ctx: MutationCtx,
-  orderId: Id<"orders">,
-  staffId: Id<"staff">,
-  stage: "tailoring" | "beading" | "fitting" | "qc",
-) {
-  const order = await ctx.db.get(orderId);
-  const staff = await ctx.db.get(staffId);
-
-  if (!order || !staff) {
-    throw new Error("Order or staff not found");
-  }
-
-  const now = Date.now();
-
-  // Create stage history entry
-  await ctx.db.insert("stageHistory", {
-    orderId,
-    orderNumber: order.orderNumber,
-    stage,
-    assignedStaffId: staffId,
-    assignedStaffName: staff.name,
-    assignedStaffRole: staff.role as StaffRole,
-    startedAt: now,
-    status: "in_progress",
-  });
-
-  // Create staff assignment
-  await ctx.db.insert("staffAssignments", {
-    staffId,
-    staffName: staff.name,
-    staffRole: staff.role as StaffRole,
-    orderId,
-    orderNumber: order.orderNumber,
-    stage,
-    status: "active",
-    assignedAt: now,
-  });
-
-  // Update order
-  await ctx.db.patch(orderId, {
-    workflowStage: stage,
-    progress: STAGE_PROGRESS_MAP[stage],
-    currentAssignedStaffId: staffId,
-    currentAssignedStaffRole: staff.role as StaffRole,
-    updatedAt: now,
-  });
-}
 
 function getNextStage(currentStage: WorkflowStage): WorkflowStage {
   const currentIndex = WORKFLOW_STAGES.indexOf(currentStage);

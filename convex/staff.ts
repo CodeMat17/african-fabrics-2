@@ -1,153 +1,104 @@
-import { mutation, query, QueryCtx, MutationCtx } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { Doc, Id } from "./_generated/dataModel";
-
-/* ==================== TYPES ==================== */
-
-type StaffRole = "tailor" | "beader" | "fitter" | "qc";
-
-interface StaffWithAvailability extends Doc<"staff"> {
-  availability: "available" | "busy";
-  currentAssignment?: {
-    orderId: Id<"orders">;
-    orderNumber: string;
-    stage: string;
-  };
-}
-
-/* ==================== CREATE STAFF ==================== */
-
-export const createStaff = mutation({
-  args: {
-    name: v.string(),
-    phone: v.string(),
-    role: v.union(
-      v.literal("tailor"),
-      v.literal("beader"),
-      v.literal("fitter"),
-      v.literal("qc"),
-    ),
-  },
-  handler: async (ctx, args) => {
-    // Check if phone already exists
-    const existingStaff = await ctx.db
-      .query("staff")
-      .withIndex("by_phone", (q) => q.eq("phone", args.phone))
-      .first();
-
-    if (existingStaff) {
-      throw new Error(`Staff ${args.name} with this phone number already exists`);
-    }
-
-    const now = Date.now();
-
-    const staffId = await ctx.db.insert("staff", {
-      name: args.name,
-      phone: args.phone,
-      role: args.role,
-      isActive: true,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    return staffId;
-  },
-});
+import { Id } from "./_generated/dataModel";
 
 /* ==================== GET ALL STAFF ==================== */
 
 export const getAllStaff = query({
   args: {},
-  handler: async (ctx): Promise<StaffWithAvailability[]> => {
-    const staff = await ctx.db.query("staff").order("desc").collect();
+  handler: async (ctx) => {
+    const allStaff = await ctx.db.query("staff").order('desc').collect();
+    const allOrders = await ctx.db.query("orders").collect();
 
-    // Enrich with availability status
-    const enrichedStaff = await Promise.all(
-      staff.map(async (member) => {
-        const availability = await getStaffAvailability(ctx, member._id);
-        return {
-          ...member,
-          ...availability,
-        };
-      }),
-    );
+    // Build assignment map, completed count, and total duration in a single pass
+    const assignmentMap = new Map<string, { orderId: Id<"orders">; orderNumber: string; stage: string }>();
+    const completedCountMap = new Map<string, number>();
+    const totalDurationMap = new Map<string, number>();
 
-    return enrichedStaff;
-  },
-});
-
-/* ==================== GET STAFF BY ROLE ==================== */
-
-export const getStaffByRole = query({
-  args: {
-    role: v.union(
-      v.literal("tailor"),
-      v.literal("beader"),
-      v.literal("fitter"),
-      v.literal("qc"),
-    ),
-  },
-  handler: async (ctx, { role }): Promise<StaffWithAvailability[]> => {
-    const staff = await ctx.db
-      .query("staff")
-      .withIndex("by_role", (q) => q.eq("role", role))
-      .collect();
-
-    // Enrich with availability status
-    const enrichedStaff = await Promise.all(
-      staff.map(async (member) => {
-        const availability = await getStaffAvailability(ctx, member._id);
-        return {
-          ...member,
-          ...availability,
-        };
-      }),
-    );
-
-    return enrichedStaff;
-  },
-});
-
-/* ==================== GET AVAILABLE STAFF BY ROLE ==================== */
-
-export const getAvailableStaffByRole = query({
-  args: {
-    role: v.union(
-      v.literal("tailor"),
-      v.literal("beader"),
-      v.literal("fitter"),
-      v.literal("qc"),
-    ),
-  },
-  handler: async (ctx, { role }): Promise<StaffWithAvailability[]> => {
-    // Get all active staff with this role
-    const staff = await ctx.db
-      .query("staff")
-      .withIndex("by_active_role", (q) =>
-        q.eq("isActive", true).eq("role", role),
-      )
-      .collect();
-
-    // Filter to only available staff (no active assignments)
-    const availableStaff: StaffWithAvailability[] = [];
-
-    for (const member of staff) {
-      const activeAssignment = await ctx.db
-        .query("staffAssignments")
-        .withIndex("by_staff_and_status", (q) =>
-          q.eq("staffId", member._id).eq("status", "active"),
-        )
-        .first();
-
-      if (!activeAssignment) {
-        availableStaff.push({
-          ...member,
-          availability: "available",
+    for (const order of allOrders) {
+      if (order.currentlyAssignedTo) {
+        assignmentMap.set(order.currentlyAssignedTo.staffId, {
+          orderId: order._id,
+          orderNumber: order.orderNumber,
+          stage: order.currentlyAssignedTo.stage,
         });
+      }
+
+      for (const assignment of [
+        order.assignedTailor,
+        order.assignedBeader,
+        order.assignedFitter,
+        order.assignedQC,
+      ]) {
+        if (assignment?.completedAt) {
+          const key = assignment.staffId as string;
+          completedCountMap.set(key, (completedCountMap.get(key) ?? 0) + 1);
+          totalDurationMap.set(key, (totalDurationMap.get(key) ?? 0) + (assignment.duration ?? 0));
+        }
       }
     }
 
-    return availableStaff;
+    return allStaff.map((staff) => {
+      const currentAssignment = assignmentMap.get(staff._id);
+      const totalCompleted = completedCountMap.get(staff._id) ?? 0;
+      const totalDuration = totalDurationMap.get(staff._id) ?? 0;
+      const avgCompletionTimeHours =
+        totalCompleted > 0 ? totalDuration / totalCompleted / (1000 * 60 * 60) : 0;
+
+      return {
+        ...staff,
+        availability: currentAssignment ? ("busy" as const) : ("available" as const),
+        currentAssignment,
+        totalCompleted,
+        avgCompletionTimeHours,
+      };
+    });
+  },
+});
+
+/* ========= GET STAFF FOR WORKFLOW (OPTIMIZED) ========== */
+
+export const getStaffForWorkflow = query({
+  args: {},
+  handler: async (ctx) => {
+    const allStaff = await ctx.db.query("staff").collect();
+    const allOrders = await ctx.db.query("orders").collect();
+
+    // Build active assignment map and completed count map in a single pass
+    const assignmentMap = new Map<string, { orderId: Id<"orders">; orderNumber: string; stage: string }>();
+    const completedCountMap = new Map<string, number>();
+
+    for (const order of allOrders) {
+      if (order.currentlyAssignedTo) {
+        assignmentMap.set(order.currentlyAssignedTo.staffId, {
+          orderId: order._id,
+          orderNumber: order.orderNumber,
+          stage: order.currentlyAssignedTo.stage,
+        });
+      }
+
+      for (const assignment of [
+        order.assignedTailor,
+        order.assignedBeader,
+        order.assignedFitter,
+        order.assignedQC,
+      ]) {
+        if (assignment?.completedAt) {
+          const key = assignment.staffId as string;
+          completedCountMap.set(key, (completedCountMap.get(key) ?? 0) + 1);
+        }
+      }
+    }
+
+    return allStaff.map((staff) => {
+      const currentAssignment = assignmentMap.get(staff._id);
+      return {
+        ...staff,
+        availability: currentAssignment ? ("busy" as const) : ("available" as const),
+        currentAssignment,
+        totalCompleted: completedCountMap.get(staff._id) ?? 0,
+      };
+    });
   },
 });
 
@@ -157,120 +108,8 @@ export const getStaffById = query({
   args: {
     staffId: v.id("staff"),
   },
-  handler: async (ctx, { staffId }): Promise<StaffWithAvailability | null> => {
-    const staff = await ctx.db.get(staffId);
-
-    if (!staff) {
-      return null;
-    }
-
-    const availability = await getStaffAvailability(ctx, staffId);
-
-    return {
-      ...staff,
-      ...availability,
-    };
-  },
-});
-
-/* ==================== UPDATE STAFF ==================== */
-
-export const updateStaff = mutation({
-  args: {
-    staffId: v.id("staff"),
-    name: v.optional(v.string()),
-    phone: v.optional(v.string()),
-    role: v.optional(
-      v.union(
-        v.literal("tailor"),
-        v.literal("beader"),
-        v.literal("fitter"),
-        v.literal("qc"),
-      ),
-    ),
-    isActive: v.optional(v.boolean()),
-  },
-  handler: async (ctx, args) => {
-    const { staffId, ...updates } = args;
-
-    const staff = await ctx.db.get(staffId);
-    if (!staff) {
-      throw new Error("Staff member not found");
-    }
-
-    // If phone is being updated, check for duplicates
-    if (updates.phone && updates.phone !== staff.phone) {
-      const existingStaff = await ctx.db
-        .query("staff")
-        .withIndex("by_phone", (q) => q.eq("phone", updates.phone!))
-        .first();
-
-      if (existingStaff) {
-        throw new Error(`Staff ${staff.name} with this phone number already exists`);
-      }
-    }
-
-    // Check if staff has active assignments before deactivating
-    if (updates.isActive === false) {
-      const activeAssignment = await ctx.db
-        .query("staffAssignments")
-        .withIndex("by_staff_and_status", (q) =>
-          q.eq("staffId", staffId).eq("status", "active"),
-        )
-        .first();
-
-      if (activeAssignment) {
-        throw new Error(
-          "Cannot deactivate staff member with active assignments. " +
-            "Please complete or reassign current orders first.",
-        );
-      }
-    }
-
-    await ctx.db.patch(staffId, {
-      ...updates,
-      updatedAt: Date.now(),
-    });
-
-    return staffId;
-  },
-});
-
-/* ==================== DELETE STAFF ==================== */
-
-export const deleteStaff = mutation({
-  args: {
-    staffId: v.id("staff"),
-  },
   handler: async (ctx, { staffId }) => {
-    const staff = await ctx.db.get(staffId);
-    if (!staff) {
-      throw new Error("Staff member not found");
-    }
-
-    // Check for active assignments
-    const activeAssignment = await ctx.db
-      .query("staffAssignments")
-      .withIndex("by_staff_and_status", (q) =>
-        q.eq("staffId", staffId).eq("status", "active"),
-      )
-      .first();
-
-    if (activeAssignment) {
-      throw new Error(
-        "Cannot delete staff member with active assignments. " +
-          "Please complete or reassign current orders first.",
-      );
-    }
-
-    // Soft delete by marking as inactive instead of hard delete
-    // This preserves historical data
-    await ctx.db.patch(staffId, {
-      isActive: false,
-      updatedAt: Date.now(),
-    });
-
-    return staffId;
+    return await ctx.db.get(staffId);
   },
 });
 
@@ -282,163 +121,116 @@ export const getStaffWorkload = query({
   },
   handler: async (ctx, { staffId }) => {
     const staff = await ctx.db.get(staffId);
-    if (!staff) {
-      throw new Error("Staff member not found");
+    if (!staff) return null;
+
+    // ✅ Get all orders and check assignments
+    const allOrders = await ctx.db.query("orders").collect();
+
+    // Count completed work by this staff member
+    let totalCompleted = 0;
+    let totalDuration = 0;
+
+    for (const order of allOrders) {
+      // Check each stage assignment
+      if (
+        order.assignedTailor?.staffId === staffId &&
+        order.assignedTailor.completedAt
+      ) {
+        totalCompleted++;
+        totalDuration += order.assignedTailor.duration || 0;
+      }
+      if (
+        order.assignedBeader?.staffId === staffId &&
+        order.assignedBeader.completedAt
+      ) {
+        totalCompleted++;
+        totalDuration += order.assignedBeader.duration || 0;
+      }
+      if (
+        order.assignedFitter?.staffId === staffId &&
+        order.assignedFitter.completedAt
+      ) {
+        totalCompleted++;
+        totalDuration += order.assignedFitter.duration || 0;
+      }
+      if (
+        order.assignedQC?.staffId === staffId &&
+        order.assignedQC.completedAt
+      ) {
+        totalCompleted++;
+        totalDuration += order.assignedQC.duration || 0;
+      }
     }
 
-    // Get active assignment
-    const activeAssignment = await ctx.db
-      .query("staffAssignments")
-      .withIndex("by_staff_and_status", (q) =>
-        q.eq("staffId", staffId).eq("status", "active"),
-      )
-      .first();
-
-    // Get completed assignments count
-    const completedAssignments = await ctx.db
-      .query("staffAssignments")
-      .withIndex("by_staff_and_status", (q) =>
-        q.eq("staffId", staffId).eq("status", "completed"),
-      )
-      .collect();
-
-    // Get stage history
-    const stageHistory = await ctx.db
-      .query("stageHistory")
-      .withIndex("by_staff", (q) => q.eq("assignedStaffId", staffId))
-      .collect();
-
-    // Calculate average completion time
-    const completedStages = stageHistory.filter(
-      (stage) => stage.status === "completed" && stage.duration,
+    // Find current assignment
+    const currentOrder = allOrders.find(
+      (order) => order.currentlyAssignedTo?.staffId === staffId,
     );
 
-    const avgCompletionTime =
-      completedStages.length > 0
-        ? completedStages.reduce(
-            (sum, stage) => sum + (stage.duration || 0),
-            0,
-          ) / completedStages.length
-        : 0;
-
     return {
-      staff: {
-        _id: staff._id,
-        name: staff.name,
-        role: staff.role,
-      },
-      activeAssignment: activeAssignment
+      staffId,
+      staffName: staff.name,
+      role: staff.role,
+      currentAssignment: currentOrder
         ? {
-            orderId: activeAssignment.orderId,
-            orderNumber: activeAssignment.orderNumber,
-            stage: activeAssignment.stage,
-            assignedAt: activeAssignment.assignedAt,
+            orderId: currentOrder._id,
+            orderNumber: currentOrder.orderNumber,
+            stage: currentOrder.currentlyAssignedTo!.stage,
+            assignedAt:
+              currentOrder.currentlyAssignedTo!.stage === "tailoring"
+                ? currentOrder.assignedTailor?.assignedAt
+                : currentOrder.currentlyAssignedTo!.stage === "beading"
+                  ? currentOrder.assignedBeader?.assignedAt
+                  : currentOrder.currentlyAssignedTo!.stage === "fitting"
+                    ? currentOrder.assignedFitter?.assignedAt
+                    : currentOrder.assignedQC?.assignedAt,
           }
         : null,
       statistics: {
-        totalCompleted: completedAssignments.length,
-        totalStagesCompleted: completedStages.length,
-        avgCompletionTimeMs: Math.round(avgCompletionTime),
-        avgCompletionTimeHours:
-          Math.round((avgCompletionTime / (1000 * 60 * 60)) * 10) / 10,
+        totalCompleted,
+        totalDuration,
+        averageDuration:
+          totalCompleted > 0 ? totalDuration / totalCompleted : 0,
       },
     };
   },
 });
 
-/* ==================== GET ALL STAFF WORKLOADS ==================== */
+/* ==================== CREATE STAFF ==================== */
 
-export const getAllStaffWorkloads = query({
-  args: {},
-  handler: async (ctx) => {
-    const allStaff = await ctx.db.query("staff").collect();
-
-    const workloads = await Promise.all(
-      allStaff.map(async (staff) => {
-        const activeAssignment = await ctx.db
-          .query("staffAssignments")
-          .withIndex("by_staff_and_status", (q) =>
-            q.eq("staffId", staff._id).eq("status", "active"),
-          )
-          .first();
-
-        const completedCount = await ctx.db
-          .query("staffAssignments")
-          .withIndex("by_staff_and_status", (q) =>
-            q.eq("staffId", staff._id).eq("status", "completed"),
-          )
-          .collect();
-
-        return {
-          staffId: staff._id,
-          name: staff.name,
-          role: staff.role,
-          isActive: staff.isActive,
-          availability: activeAssignment
-            ? ("busy" as const)
-            : ("available" as const),
-          currentOrder: activeAssignment
-            ? {
-                orderId: activeAssignment.orderId,
-                orderNumber: activeAssignment.orderNumber,
-                stage: activeAssignment.stage,
-              }
-            : null,
-          completedCount: completedCount.length,
-        };
-      }),
-    );
-
-    return workloads;
-  },
-});
-
-/* ==================== HELPER FUNCTIONS ==================== */
-
-/**
- * Get staff availability status
- * Single source of truth: derived from active assignments
- */
-async function getStaffAvailability(
-  ctx: QueryCtx | MutationCtx,
-  staffId: Id<"staff">,
-): Promise<{
-  availability: "available" | "busy";
-  currentAssignment?: {
-    orderId: Id<"orders">;
-    orderNumber: string;
-    stage: string;
-  };
-}> {
-  // Check for active assignment
-  const activeAssignment = await ctx.db
-    .query("staffAssignments")
-    .withIndex("by_staff_and_status", (q) =>
-      q.eq("staffId", staffId).eq("status", "active"),
-    )
-    .first();
-
-  if (activeAssignment) {
-    return {
-      availability: "busy",
-      currentAssignment: {
-        orderId: activeAssignment.orderId,
-        orderNumber: activeAssignment.orderNumber,
-        stage: activeAssignment.stage,
-      },
-    };
-  }
-
-  return {
-    availability: "available",
-  };
-}
-
-/* ==================== STAFF PERFORMANCE METRICS ==================== */
-
-export const getStaffPerformanceMetrics = query({
+export const createStaff = mutation({
   args: {
-    staffId: v.optional(v.id("staff")),
+    name: v.string(),
+    role: v.union(
+      v.literal("tailor"),
+      v.literal("beader"),
+      v.literal("fitter"),
+      v.literal("qc"),
+    ),
+    phone: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+
+    const staffId = await ctx.db.insert("staff", {
+      name: args.name,
+      role: args.role,
+      phone: args.phone || "",
+      isActive: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    return staffId;
+  },
+});
+
+/* ==================== UPDATE STAFF ==================== */
+
+export const updateStaff = mutation({
+  args: {
+    staffId: v.id("staff"),
+    name: v.optional(v.string()),
     role: v.optional(
       v.union(
         v.literal("tailor"),
@@ -447,70 +239,71 @@ export const getStaffPerformanceMetrics = query({
         v.literal("qc"),
       ),
     ),
+    phone: v.optional(v.string()),
+    isActive: v.optional(v.boolean()),
   },
-  handler: async (ctx, { staffId, role }) => {
-    let staffMembers: Doc<"staff">[];
+  handler: async (ctx, args) => {
+    const { staffId, ...updates } = args;
+    await ctx.db.patch(staffId, updates);
+  },
+});
 
-    if (staffId) {
-      const staff = await ctx.db.get(staffId);
-      staffMembers = staff ? [staff] : [];
-    } else if (role) {
-      staffMembers = await ctx.db
-        .query("staff")
-        .withIndex("by_role", (q) => q.eq("role", role))
-        .collect();
-    } else {
-      staffMembers = await ctx.db.query("staff").collect();
+/* ==================== DELETE STAFF ==================== */
+
+export const deleteStaff = mutation({
+  args: {
+    staffId: v.id("staff"),
+    forceDelete: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { staffId, forceDelete }) => {
+    const staff = await ctx.db.get(staffId);
+    if (!staff) {
+      throw new Error("Staff member not found");
     }
 
-    const metrics = await Promise.all(
-      staffMembers.map(async (staff) => {
-        const stageHistory = await ctx.db
-          .query("stageHistory")
-          .withIndex("by_staff", (q) => q.eq("assignedStaffId", staff._id))
-          .collect();
+    const allOrders = await ctx.db.query("orders").collect();
 
-        const completed = stageHistory.filter(
-          (stage) => stage.status === "completed",
-        );
-        const inProgress = stageHistory.filter(
-          (stage) => stage.status === "in_progress",
-        );
+    // Block any action if staff has an active (in-progress) assignment
+    const hasActiveAssignment = allOrders.some(
+      (order) => order.currentlyAssignedTo?.staffId === staffId,
+    );
+    if (hasActiveAssignment) {
+      throw new Error(
+        "Cannot remove staff with an active assignment. Complete or reassign their current order first.",
+      );
+    }
 
-        const durations = completed
-          .filter((stage) => stage.duration)
-          .map((stage) => stage.duration!);
+    // Soft delete (deactivate) — always safe
+    if (!forceDelete) {
+      await ctx.db.patch(staffId, { isActive: false });
+      return {
+        deletionType: "soft" as const,
+        message: `${staff.name} has been deactivated and can no longer be assigned to orders.`,
+      };
+    }
 
-        const avgDuration =
-          durations.length > 0
-            ? durations.reduce((sum, d) => sum + d, 0) / durations.length
-            : 0;
-
-        const minDuration = durations.length > 0 ? Math.min(...durations) : 0;
-        const maxDuration = durations.length > 0 ? Math.max(...durations) : 0;
-
-        return {
-          staff: {
-            _id: staff._id,
-            name: staff.name,
-            role: staff.role,
-            isActive: staff.isActive,
-          },
-          metrics: {
-            totalAssignments: stageHistory.length,
-            completedAssignments: completed.length,
-            inProgressAssignments: inProgress.length,
-            avgCompletionTimeHours:
-              Math.round((avgDuration / (1000 * 60 * 60)) * 10) / 10,
-            minCompletionTimeHours:
-              Math.round((minDuration / (1000 * 60 * 60)) * 10) / 10,
-            maxCompletionTimeHours:
-              Math.round((maxDuration / (1000 * 60 * 60)) * 10) / 10,
-          },
-        };
-      }),
+    // Hard delete — only if no historical assignments exist
+    const hasHistory = allOrders.some(
+      (order) =>
+        order.assignedTailor?.staffId === staffId ||
+        order.assignedBeader?.staffId === staffId ||
+        order.assignedFitter?.staffId === staffId ||
+        order.assignedQC?.staffId === staffId,
     );
 
-    return metrics;
+    if (hasHistory) {
+      // Fall back to deactivation to preserve historical records
+      await ctx.db.patch(staffId, { isActive: false });
+      return {
+        deletionType: "soft" as const,
+        message: `${staff.name} has historical order records and was deactivated instead of deleted.`,
+      };
+    }
+
+    await ctx.db.delete(staffId);
+    return {
+      deletionType: "hard" as const,
+      message: `${staff.name} has been permanently deleted.`,
+    };
   },
 });
