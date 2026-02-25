@@ -16,6 +16,7 @@ import {
   MoreVertical,
   Edit,
   Trash2,
+  Loader,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -195,15 +196,19 @@ export default function StaffPage() {
           </Select>
         </motion.div>
 
-        <motion.div
-          layout
-          className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4'>
-          <AnimatePresence mode='popLayout'>
-            {filteredStaff.map((staff, idx) => (
-              <StaffCard key={staff._id} staff={staff} index={idx} />
-            ))}
-          </AnimatePresence>
-        </motion.div>
+        {allStaff === undefined ? <div className="flex justify-center px-4 py-32 items-center">
+          <Loader className="w-6 h-6 mr-3 animate-spin" /> Loading staff data...
+        </div> :
+          <motion.div
+            layout
+            className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4'>
+            <AnimatePresence mode='popLayout'>
+              {filteredStaff.map((staff, idx) => (
+                <StaffCard key={staff._id} staff={staff} index={idx} />
+              ))}
+            </AnimatePresence>
+          </motion.div>
+        }
 
         {filteredStaff.length === 0 && (
           <motion.div
