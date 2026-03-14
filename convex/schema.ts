@@ -197,7 +197,9 @@ export default defineSchema({
     .index("by_tailor", ["assignedTailor.staffId"])
     .index("by_beader", ["assignedBeader.staffId"])
     .index("by_fitter", ["assignedFitter.staffId"])
-    .index("by_qc", ["assignedQC.staffId"]),
+    .index("by_qc", ["assignedQC.staffId"])
+    // Lets us find a staff member's active order in O(1) instead of a full scan
+    .index("by_current_staff", ["currentlyAssignedTo.staffId"]),
 
   // Tracks the journey of each order through stages
   stageHistory: defineTable({

@@ -399,11 +399,13 @@ export const assignStaffToOrder = mutation({
       throw new Error("Staff member is not active");
     }
 
-    // Check if staff is already busy
-    const orders = await ctx.db.query("orders").collect();
-    const staffCurrentOrder = orders.find(
-      (o) => o.currentlyAssignedTo?.staffId === staffId,
-    );
+    // O(1) index lookup — no full table scan
+    const staffCurrentOrder = await ctx.db
+      .query("orders")
+      .withIndex("by_current_staff", (q) =>
+        q.eq("currentlyAssignedTo.staffId", staffId),
+      )
+      .first();
 
     if (staffCurrentOrder) {
       throw new Error(
@@ -552,6 +554,9 @@ export const completeCurrentStage = mutation({
       throw new Error("No assignment found for current stage");
     }
 
+    // Capture staffId before clearing currentlyAssignedTo
+    const completingStaffId = order.currentlyAssignedTo.staffId;
+
     const completedAssignment: StaffAssignment = {
       ...assignment,
       completedAt: now,
@@ -575,10 +580,34 @@ export const completeCurrentStage = mutation({
       });
 
       if (nextStage === "completed") {
-        await ctx.db.patch(orderId, {
-          completedAt: now,
-        });
+        await ctx.db.patch(orderId, { completedAt: now });
       }
+    }
+
+    // Incrementally update the performance cache — avoids needing a full
+    // order scan in getAllStaff / getStaffForWorkflow / getStaffWorkload
+    const stageDuration = completedAssignment.duration ?? 0;
+    const existingCache = await ctx.db
+      .query("staffPerformanceCache")
+      .withIndex("by_staff", (q) => q.eq("staffId", completingStaffId))
+      .first();
+
+    if (existingCache) {
+      const newTotal = existingCache.totalOrders + 1;
+      await ctx.db.patch(existingCache._id, {
+        totalOrders: newTotal,
+        avgDuration:
+          (existingCache.avgDuration * existingCache.totalOrders + stageDuration) /
+          newTotal,
+        lastCalculated: now,
+      });
+    } else {
+      await ctx.db.insert("staffPerformanceCache", {
+        staffId: completingStaffId,
+        totalOrders: 1,
+        avgDuration: stageDuration,
+        lastCalculated: now,
+      });
     }
 
     return {
@@ -701,21 +730,26 @@ export const getOrderTimeline = query({
 export const getDashboardStats = query({
   args: {},
   handler: async (ctx) => {
-    const allOrders = await ctx.db.query("orders").collect();
+    // Use the by_collected index to avoid loading all orders in one go
+    const activeOrders = await ctx.db
+      .query("orders")
+      .withIndex("by_collected", (q) => q.eq("collected", false))
+      .collect();
 
-    const activeOrders = allOrders.filter((o) => !o.collected);
-    const completedOrders = allOrders.filter((o) => o.collected);
+    const collectedOrders = await ctx.db
+      .query("orders")
+      .withIndex("by_collected", (q) => q.eq("collected", true))
+      .collect();
 
+    // Single pass over active orders for stage counts + busy-staff count
     const ordersByStage = {
-      pending: activeOrders.filter((o) => o.workflowStage === "pending").length,
-      tailoring: activeOrders.filter((o) => o.workflowStage === "tailoring")
-        .length,
-      beading: activeOrders.filter((o) => o.workflowStage === "beading").length,
-      fitting: activeOrders.filter((o) => o.workflowStage === "fitting").length,
-      qc: activeOrders.filter((o) => o.workflowStage === "qc").length,
-      completed: activeOrders.filter((o) => o.workflowStage === "completed")
-        .length,
+      pending: 0, tailoring: 0, beading: 0, fitting: 0, qc: 0, completed: 0,
     };
+    let busyStaff = 0;
+    for (const order of activeOrders) {
+      ordersByStage[order.workflowStage]++;
+      if (order.currentlyAssignedTo) busyStaff++;
+    }
 
     const allStaff = await ctx.db.query("staff").collect();
     const activeStaff = allStaff.filter((s) => s.isActive);
@@ -727,13 +761,11 @@ export const getDashboardStats = query({
       qc: activeStaff.filter((s) => s.role === "qc").length,
     };
 
-    const busyStaff = allOrders.filter((o) => o.currentlyAssignedTo).length;
-
     return {
       orders: {
-        total: allOrders.length,
+        total: activeOrders.length + collectedOrders.length,
         active: activeOrders.length,
-        completed: completedOrders.length,
+        completed: collectedOrders.length,
         byStage: ordersByStage,
       },
       staff: {
